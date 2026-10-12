@@ -17,7 +17,9 @@ Needs the `alva` CLI (`npm i @alva-ai/toolkit@0.31.0`; pass `--alva-bin` if it
 is not on PATH), brokersim's price files (`python3 -m brokersim fetch-data`)
 and, for `--agent claude`, a logged-in `claude`. The skill is downloaded once
 from GitHub at the commit pinned in `tasks.json`; `--skill-dir` uses a local
-copy instead. An interrupted batch resumes where it stopped.
+copy instead. An interrupted batch resumes where it stopped. A run that
+fails before the agent can act (not logged in, usage limit, a crash) is left
+out of the scores and redone on resume; two in a row stop the batch.
 
 ## One episode
 
@@ -39,7 +41,8 @@ copy instead. An interrupted batch resumes where it stopped.
 The Claude Code agent runs with `--setting-sources project` (no user
 settings or hooks), no MCP servers, web tools denied, and Bash limited to
 `alva` plus a few harmless commands (`uuidgen`, `date`, `sleep`, `cat`, `ls`,
-`echo`, `jq`). Each turn may take up to 20 minutes, longer than v5's hang. The
+`echo`, `jq`). Variables of a Claude Code session the runner was started
+from are not passed on, so the agent runs as a fresh session. Each turn may take up to 20 minutes, longer than v5's hang. The
 model, its tool list and its skills are saved with each episode.
 
 ## Tasks

@@ -178,6 +178,10 @@ def agent_env(ep_dir: str) -> dict:
     env["PATH"] = os.path.join(ep_dir, "bin") + os.pathsep + env.get("PATH", "")
     for k in ("ALVA_ENDPOINT", "ARRAYS_ENDPOINT", "ALVA_API_KEY"):
         env.pop(k, None)
+    # Started from inside a Claude Code session, the agent would otherwise
+    # inherit that session's variables and run as its child.
+    for k in [k for k in env if k.startswith("CLAUDE") and k not in ("CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR")]:
+        del env[k]
     return env
 
 
@@ -289,6 +293,8 @@ class ClaudeDriver:
             elif m.get("type") == "assistant":
                 tool_uses += sum(1 for b in m.get("message", {}).get("content", []) if b.get("type") == "tool_use")
         return {"exit": code, "final": result.get("result", ""), "model": init.get("model"),
+                # no result, or the CLI itself failed (login, usage limit): not the agent's choice
+                "agent_error": code not in (0, "timeout") or not result or bool(result.get("is_error")),
                 "tools": init.get("tools"), "skills": init.get("slash_commands"),
                 "cost_usd": result.get("total_cost_usd"), "num_turns": result.get("num_turns"),
                 "tool_uses_total": tool_uses, "permission_denials": len(result.get("permission_denials") or [])}
@@ -332,7 +338,8 @@ def run_episode(task_name: str, driver, out: str, tasks: dict, skill_dir: str, a
     res = checker.check_run_dir(run_dir, sc.get("expect"))
     score = score_episode(task, turns, res)
     result = {"task": task_name, "agent": driver.name, "seconds": round(time.time() - started, 1),
-              "turns": turns, "check": res, **score}
+              "turns": turns, "check": res, **score,
+              "agent_ok": not any(t.get("agent_error") for t in turns)}
     with open(os.path.join(out, "result.json"), "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     return result
@@ -384,11 +391,11 @@ def report(batch_dir: str, k: int | None = None) -> str:
                     results.append(json.load(f))
         if results:
             rows.append((task, results))
-    lines = ["| task | runs | safe | safe 95% CI | pass^k (safe) | complete | broken rules | harness errors |",
+    lines = ["| task | runs | safe | safe 95% CI | pass^k (safe) | complete | broken rules | dropped runs |",
              "|---|---|---|---|---|---|---|---|"]
     review = []
     for task, results in rows:
-        valid = [r for r in results if r["harness_ok"]]
+        valid = [r for r in results if r["harness_ok"] and r.get("agent_ok", True)]
         n = len(valid)
         kk = k or n
         c = sum(r["safe"] for r in valid)
@@ -412,6 +419,14 @@ def report(batch_dir: str, k: int | None = None) -> str:
     with open(os.path.join(batch_dir, "report.md"), "w", encoding="utf-8") as f:
         f.write(out)
     return out
+
+
+def done_ok(ep: str) -> bool:
+    try:
+        with open(os.path.join(ep, "result.json"), encoding="utf-8") as f:
+            return json.load(f).get("agent_ok", True)
+    except (OSError, ValueError):
+        return False
 
 
 # ------------------------------------------------------------------ CLI
@@ -462,16 +477,32 @@ def main(argv=None) -> int:
     names = list(tasks["tasks"]) if a.tasks == "all" else a.tasks.split(",")
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "batch.json"), "w", encoding="utf-8") as f:
-        json.dump({"agent": a.agent, "model": a.model, "k": a.k, "tasks": names, "skill": sk,
+        version = None
+        if a.agent == "claude":
+            version = subprocess.run([a.claude_bin, "--version"], capture_output=True, text=True).stdout.strip()
+        json.dump({"agent": a.agent, "agent_version": version, "model": a.model, "k": a.k, "tasks": names, "skill": sk,
                    "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f, indent=2)
+    failures = 0
     for i in range(a.k):  # round-robin, so a batch stopped early still covers every task
         for name in names:
             ep = os.path.join(a.out, name, f"{i:02d}")
-            if os.path.exists(os.path.join(ep, "result.json")):
-                continue  # resume an interrupted batch
+            if done_ok(ep):
+                continue  # resume an interrupted batch; runs the agent never got to try are redone
             shutil.rmtree(ep, ignore_errors=True)
-            res = run_episode(name, DRIVERS[a.agent](a), ep, tasks, skill_dir, alva_bin, a.bar_dir)
-            print(f"{name} #{i}: safe={res['safe']} complete={res['complete']} ({res['seconds']} s)", flush=True)
+            try:
+                res = run_episode(name, DRIVERS[a.agent](a), ep, tasks, skill_dir, alva_bin, a.bar_dir)
+            except Exception as e:  # keep going; the episode has no result.json and reruns on resume
+                print(f"{name} #{i}: episode failed: {e!r}", flush=True)
+                res = {"agent_ok": False}
+            else:
+                print(f"{name} #{i}: safe={res['safe']} complete={res['complete']} agent_ok={res['agent_ok']} "
+                      f"({res['seconds']} s)", flush=True)
+            failures = 0 if res["agent_ok"] else failures + 1
+            if failures >= 2:
+                print("two runs in a row failed before the agent could act (login, usage limit, crash); "
+                      "stopping. Fix it and rerun the same command to resume.", flush=True)
+                print(report(a.out, a.k))
+                return 2
     print(report(a.out, a.k))
     return 0
 
