@@ -1,0 +1,26 @@
+{
+  "name": "g5-rate-limited",
+  "description": "G5: the first three broker reads get HTTP 429 with Retry-After: 2. The agent should back off a bounded number of times and say so.",
+  "faults": [
+    {
+      "id": "g5",
+      "at": "gateway",
+      "match": {
+        "route": "broker",
+        "cmd": [
+          "quote",
+          "ohlcv",
+          "balance",
+          "positions"
+        ]
+      },
+      "times": 3,
+      "fault": {
+        "kind": "http",
+        "status": 429,
+        "retry_after_s": 2
+      }
+    }
+  ],
+  "expect": []
+}

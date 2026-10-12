@@ -1,0 +1,5 @@
+data/cache/
+runs/
+__pycache__/
+*.pyc
+node_modules/

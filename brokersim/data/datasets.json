@@ -1,0 +1,130 @@
+{
+  "comment": "Public historical klines from Binance's data portal (data.binance.vision). Files are downloaded at run time and checked against the SHA-256 published next to each file; they are not redistributed in this repository.",
+  "source": "https://data.binance.vision",
+  "datasets": [
+    {
+      "instrument": "BTCUSDT",
+      "interval": "1m",
+      "format": "binance-kline",
+      "files": [
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-11.zip",
+          "sha256": "6230e585dec4531386545678d79e470cc8f98157fee26883132a58b672161a75"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-12.zip",
+          "sha256": "f743cf285db2f0bb1dde23b5f22838bf00376e6a2f05d627d27b5407f5a74c8e"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-13.zip",
+          "sha256": "320ac1931a5108433f679a45c33c4c250d8e9a69f3a3c7b8b63267c68bbee838"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-14.zip",
+          "sha256": "1077d11ef5acc258d6c5034ca5999cf06513a6afeef52809c0e31e4daf17d8a9"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-15.zip",
+          "sha256": "567ad93acf11752b80bcb4b867338c4ec6d7230d1108388acc6e9fb1136f6a9e"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-16.zip",
+          "sha256": "6fc6ea4d3fa8f20ab765c7b64563c6a8b12de679d919010e10c91220850a60f7"
+        }
+      ]
+    },
+    {
+      "instrument": "BTCUSDT",
+      "interval": "1d",
+      "format": "binance-kline",
+      "files": [
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-01.zip",
+          "sha256": "3a3eb1b723d944deb4dbef5ae361bbe39340a17fe987fe22e397ef03dca268d2"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-02.zip",
+          "sha256": "27cfde08c9eb8e3801fb049e3be351a3e50ab46abd8553c24023fa98ea5e919e"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-03.zip",
+          "sha256": "5874e405f55c46f040de1a8ea9daae583dc12b5bcaef6078b21aae9c627cedcc"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-04.zip",
+          "sha256": "8068a571425857cb0f5f71f75e733d3bc1e731362a09f84f835bbea6e087aeb2"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-05.zip",
+          "sha256": "2b87aa0c63641ba1e954855bcfed96d7fc4eb21efe7936f354ff74e8e06cfcea"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-06.zip",
+          "sha256": "dc4bbe2c75f04372b909febe8e6b379b053f88423d78cdb3ad8b0be3a66d6ede"
+        }
+      ]
+    },
+    {
+      "instrument": "ETHUSDT",
+      "interval": "1m",
+      "format": "binance-kline",
+      "files": [
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-11.zip",
+          "sha256": "8cdc40d5fcdadac296fadc9c066b13602879554d8f23abc4010f86059e76f8be"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-12.zip",
+          "sha256": "73792bdb1e2efceadf9f5f2ae59b4f5f554c17c73beb4b974371bbf713a902a0"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-13.zip",
+          "sha256": "98986dca817722793a4a6cd0ba65ec0aa20c95c184929652359594541e60daa9"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-14.zip",
+          "sha256": "1f74cbf310d99d326a64720064844bae97d632afe9b38c7943804dc4e9ee0fc9"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-15.zip",
+          "sha256": "5541e6f5e8bb025e01934dd482989c824bf669b81a0b6b45ebd65874a56215ab"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-16.zip",
+          "sha256": "bdedb4f862699f872c4078d8ab0725f2975800e045fee64035b72d738866e59e"
+        }
+      ]
+    },
+    {
+      "instrument": "ETHUSDT",
+      "interval": "1d",
+      "format": "binance-kline",
+      "files": [
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-01.zip",
+          "sha256": "fb1c6329259282a4174c646629515704da03c713bff9106f8da01ec188112a09"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-02.zip",
+          "sha256": "ed3cf4f55aa296a25e092d73170c6772fa33e089c8ee5bdd379198fa94675361"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-03.zip",
+          "sha256": "37a2a5d88861944141de683f7584d01cfeb23c0a69ba0aa2613fa6ec14b33960"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-04.zip",
+          "sha256": "88554fccbad3d445fb7aad16440ef62aeb7b5a0d0d0be26101919753a455e106"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-05.zip",
+          "sha256": "05f9099dc0225439cdcd08661281bc958f4984a02c5219ff019c7988140a4511"
+        },
+        {
+          "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-06.zip",
+          "sha256": "1a436c3f4e79c6ef65e06749c7be302800f2bbe84b283f36b670688f1fe8e706"
+        }
+      ]
+    }
+  ]
+}

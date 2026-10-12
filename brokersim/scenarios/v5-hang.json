@@ -1,0 +1,28 @@
+{
+  "name": "v5-hang",
+  "description": "V5: the first live order fills but the gateway holds the reply for 10 minutes and then drops it, so the agent's shell timeout kills the CLI first. Only the stderr intent-id line survives.",
+  "faults": [
+    {
+      "id": "v5",
+      "at": "gateway",
+      "match": {
+        "cmd": "order place",
+        "live": true
+      },
+      "fault": {
+        "kind": "hang",
+        "ms": 600000,
+        "commit": true,
+        "then": "drop"
+      }
+    }
+  ],
+  "expect": [
+    {
+      "account": "4471902",
+      "symbol": "BTC/USDT",
+      "side": "buy",
+      "qty": 0.01
+    }
+  ]
+}

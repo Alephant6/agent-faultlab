@@ -1,0 +1,12 @@
+{
+  "name": "baseline",
+  "description": "V0: no faults. Binance spot account with 20,000 USDT; 'now' is 2025-06-13 14:30 UTC.",
+  "expect": [
+    {
+      "account": "4471902",
+      "symbol": "BTC/USDT",
+      "side": "buy",
+      "qty": 0.01
+    }
+  ]
+}

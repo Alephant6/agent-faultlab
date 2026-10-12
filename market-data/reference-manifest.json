@@ -1,0 +1,106 @@
+{
+  "pin_date": "2025-06-13",
+  "replay": [
+    "2025-06-09",
+    "2025-06-20"
+  ],
+  "lookback": [
+    "2024-06-01",
+    "2025-06-30"
+  ],
+  "generated_utc": "2026-10-12T02:10:29Z",
+  "licenses": {
+    "binance": "CC BY-NC-SA 4.0 + Binance Vision Dataset Terms v1.0 (2026-08-26); attribution: Binance Vision",
+    "alpaca": "Alpaca market data terms; personal use, do not redistribute"
+  },
+  "files": {
+    "binance/BTCUSDT/1m.csv": {
+      "rows": 17280,
+      "sha256": "f8fe20750c0c96228ea9a3b64e7f064bf67371ef2d4c9a135c6543a41999836b",
+      "sources": [
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-09.zip",
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-10.zip",
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-11.zip",
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-12.zip",
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-13.zip",
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-14.zip",
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-15.zip",
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-16.zip",
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-17.zip",
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-18.zip",
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-19.zip",
+        "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-06-20.zip"
+      ]
+    },
+    "binance/BTCUSDT/1d.csv": {
+      "rows": 395,
+      "sha256": "ab282e6624a4e60fb3b19576c7d34228ce000e85b13d391f2b2963d79b3960c1",
+      "sources": [
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2024-06.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2024-07.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2024-08.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2024-09.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2024-10.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2024-11.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2024-12.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-01.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-02.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-03.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-04.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-05.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2025-06.zip"
+      ]
+    },
+    "binance/BTCUSDT/funding_8h.csv": {
+      "rows": 90,
+      "sha256": "f30a18ddd8ea2dd9eb049dccf7996e2460e80a618055062168111adc0b97f16c",
+      "sources": [
+        "https://data.binance.vision/data/futures/um/monthly/fundingRate/BTCUSDT/BTCUSDT-fundingRate-2025-06.zip"
+      ]
+    },
+    "binance/ETHUSDT/1m.csv": {
+      "rows": 17280,
+      "sha256": "67ae9485d04096185f20d9fabac56f28c7ea206dd653b86850194693b30c26b6",
+      "sources": [
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-09.zip",
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-10.zip",
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-11.zip",
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-12.zip",
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-13.zip",
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-14.zip",
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-15.zip",
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-16.zip",
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-17.zip",
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-18.zip",
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-19.zip",
+        "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1m/ETHUSDT-1m-2025-06-20.zip"
+      ]
+    },
+    "binance/ETHUSDT/1d.csv": {
+      "rows": 395,
+      "sha256": "68fe34ceee8119c135aea1ebdee7bfacce5cfe59ce6b3b484332bbb86314b6c7",
+      "sources": [
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2024-06.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2024-07.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2024-08.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2024-09.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2024-10.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2024-11.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2024-12.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-01.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-02.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-03.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-04.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-05.zip",
+        "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-06.zip"
+      ]
+    },
+    "binance/ETHUSDT/funding_8h.csv": {
+      "rows": 90,
+      "sha256": "0ac823cf7eb44e5a4008bdd715f7503a0ba8535ede77795d17e033ca2ddc0a06",
+      "sources": [
+        "https://data.binance.vision/data/futures/um/monthly/fundingRate/ETHUSDT/ETHUSDT-fundingRate-2025-06.zip"
+      ]
+    }
+  }
+}

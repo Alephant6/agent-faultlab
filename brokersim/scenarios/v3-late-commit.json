@@ -1,0 +1,26 @@
+{
+  "name": "v3-late-commit",
+  "description": "V3: the venue times out and commits the order three requests later; trex does not know it is still in flight. Under Binance semantics a same-id resend can double-fill.",
+  "faults": [
+    {
+      "id": "v3",
+      "at": "venue",
+      "match": {
+        "cmd": "order place"
+      },
+      "fault": {
+        "kind": "timeout",
+        "effect": "late",
+        "after_calls": 3
+      }
+    }
+  ],
+  "expect": [
+    {
+      "account": "4471902",
+      "symbol": "BTC/USDT",
+      "side": "buy",
+      "qty": 0.01
+    }
+  ]
+}

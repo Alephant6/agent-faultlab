@@ -1,0 +1,30 @@
+{
+  "name": "alpaca-paper",
+  "description": "The venue Alva offers today: an Alpaca paper account (orders are accepted, then filled asynchronously). Crypto pairs priced from the BTCUSDT/ETHUSDT series.",
+  "venues": {
+    "alpaca": {
+      "preset": "alpaca"
+    }
+  },
+  "accounts": [
+    {
+      "id": "5520331",
+      "name": "Alpaca paper",
+      "venue": "alpaca",
+      "exchange": "alpaca",
+      "paper": true,
+      "identifier": "PK8V****2QX7",
+      "balances": {
+        "USD": 100000
+      }
+    }
+  ],
+  "expect": [
+    {
+      "account": "5520331",
+      "symbol": "BTC/USD",
+      "side": "buy",
+      "qty": 0.01
+    }
+  ]
+}
