@@ -23,7 +23,7 @@ and is meant for `alva-ai/skills` v1.23.0. Python 3.10+, standard library only.
 ```bash
 cd brokersim
 python3 -m brokersim fetch-data          # 24 pinned Binance kline files (~0.9 MB), SHA-256 checked
-python3 -m brokersim selftest            # checker self-test + 46 unit tests
+python3 -m brokersim selftest            # checker self-test + 65 unit tests
 python3 -m brokersim serve --scenario scenarios/v2-drop-after-fill.json --out runs/v2
 ```
 
@@ -84,8 +84,27 @@ history.jsonl + ledger.jsonl + requests.jsonl  ──>  checker, replay
 * **trex model** (`broker.py`). A live order is keyed by its intent-id. Retrying
   the id replays the recorded outcome, returns `duplicate_in_flight`, or, after
   an unknown outcome, looks the order up at the venue and resends if needed.
-  Anything Alva's public docs leave open is a field of `TrexSemantics`.
-* **Venue** (`venue.py`). Real venues disagree about duplicate client order ids.
+  Anything Alva's public docs leave open is a field of `TrexSemantics`,
+  including what happens to a flag a command does not know (`unknown_flags`:
+  `reject` by default, so a typo such as `--dryrun` is an exit 1 instead of a
+  live order; `ignore` is the other choice). An exit 1 envelope always says
+  `rejected` and an exit 2 one `error`, as broker.md pairs them; cancelling an
+  order that already filled answers exit 0 with the order's own status and
+  reason `not_cancelable`. A dry run returns the clientOrderId the live order
+  with the same intent-id will carry.
+* **Trading REST** (`broker.py`). `alva trading execute` goes through the same
+  admission gate and risk rules as `alva broker`. Its symbols are canonical
+  Arrays pairs that must match the account's exchange (`BINANCE_SPOT_BTC_USDT`
+  for a `binance_spot` account, `US_SPOT_AAPL_USD` for `alpaca`), and
+  `alva trading-pairs search|resolve` finds them. `trading orders` honours
+  `--source` and `--since`; `trading equity-history` rebuilds equity at each
+  step from the starting balances, the fill ledger and the price at that time.
+* **Venue** (`venue.py`). `--param timeInForce=IOC|FOK` makes an order that
+  cannot fill at once expire, and `--param postOnly=true` rejects a limit
+  order that would take liquidity; other params are kept in `raw.info.params`.
+  A venue rejection carries the venue's error in `raw`.
+
+  Real venues disagree about duplicate client order ids.
   The disagreement is a parameter vector, and presets are points in it:
 
   | field | meaning | values |
@@ -248,8 +267,20 @@ message's stable id (V8f) closes it.
 * It does not run `alva run` or Alva's data skills. Guardrails about data
   freshness and missing data (stale feeds, 403/404 recovery, the 20% missing
   symbols rule) need a local runtime simulator and are not covered yet.
-* Spot only. Reads come back in ccxt's shapes for every venue, including
-  Alpaca and Robinhood, whose native shapes differ.
+* Spot only: no perpetuals, options or `funding-rate`. Reads come back in
+  ccxt's shapes for every venue, including Alpaca and Robinhood, whose native
+  shapes differ.
+* Not implemented (they answer 404): `alva run`, data skills, schedules,
+  playbooks, alerts, secrets, `portfolio`, `trading subscribe|unsubscribe`
+  and the less common `fs` commands. A scheduled-trading test therefore
+  delivers the scheduled message to the agent itself; the parts that run
+  inside one occurrence (the consent read, the dry run, the live order) are
+  all here.
+* Guesses where Alva's material is silent, each worth checking against the
+  real service: rejecting unknown flags; canonical names for crypto on an
+  Alpaca account (`US_SPOT_BTC_USD`) and for spot on an exchange without a
+  `_spot` suffix (`OKX_SPOT_*`); the `trading execute` dry-run status
+  `simulated`; accepting an intent-id that is not a UUID.
 * The `describe` grammar and the spine's id field names are reconstructed
   from the CLI source and broker.md. The real `alva broker describe` output is
   the authority; compare against it before trusting a result that depends on a

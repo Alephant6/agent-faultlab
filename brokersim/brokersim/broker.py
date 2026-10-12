@@ -53,6 +53,9 @@ class TrexSemantics:
     # Admission gate (broker.md: price collar ~12%, budget/velocity/open-order limits)
     price_collar_pct: float = 12.0
     max_open_orders: int = 20
+    # Flags a command does not know: reject (exit 1, never placed) | ignore.
+    # Alva's docs call the grammar "the contract" but do not say which.
+    unknown_flags: str = "reject"
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "TrexSemantics":
@@ -150,10 +153,52 @@ COMMANDS = [
         "[--param key=value]... (or --stdin with a JSON object)",
     ),
     ("order get", "alva broker order get --account <account id> (--intent-id <id> | --id <order id> | --client-order-id <id>)"),
-    ("order list", "alva broker order list --account <account id> [--status open|closed|canceled|all] [--symbol <symbol>] [--limit <n>]"),
+    ("order list", "alva broker order list --account <account id> [--status open|filled|closed|canceled|expired|rejected|all] "
+                   "[--symbol <symbol>] [--since <ms>] [--limit <n>]"),
     ("order cancel", "alva broker order cancel --account <account id> (--id <order id> | --intent-id <id>)"),
     ("raw", "alva broker raw --venue <venue> --method <method> --params <json>"),
 ]
+
+
+GLOBAL_FLAGS = {"help", "json", "stdin"}
+ORDER_ID_FLAGS = {"account", "venue", "id", "intent-id", "client-order-id"}
+COMMAND_FLAGS = {
+    "describe": {"venue", "command"},
+    "venues": set(),
+    "accounts": set(),
+    "risk-rules": set(),
+    "quote": {"venue", "symbol", "account"},
+    "ohlcv": {"venue", "symbol", "account", "timeframe", "since", "limit"},
+    "balance": {"account"},
+    "positions": {"account"},
+    "order place": {"account", "venue", "symbol", "side", "amount", "type", "price", "intent-id",
+                    "client-order-id", "dry-run", "param"},
+    "order get": ORDER_ID_FLAGS,
+    "order list": {"account", "venue", "status", "symbol", "limit", "since"},
+    "order cancel": ORDER_ID_FLAGS,
+    "raw": {"venue", "method", "params"},
+}
+# `order list --status`: the write spine's words and ccxt's both work.
+LIST_STATUS = {"open": {"open"}, "closed": {"closed"}, "filled": {"closed"}, "canceled": {"canceled"},
+               "cancelled": {"canceled"}, "expired": {"expired"}, "rejected": {"rejected"}}
+
+
+def unknown_flags(argv: list[str], command: str) -> list[str]:
+    known = COMMAND_FLAGS.get(command)
+    if known is None:
+        return []
+    names = [a[2:].partition("=")[0] for a in argv if a.startswith("--")]
+    return [n for n in names if n not in known and n not in GLOBAL_FLAGS]
+
+
+def int_flag(flags: dict, name: str, default: int | None) -> int | None:
+    v = flags.get(name)
+    if v is None:
+        return default
+    try:
+        return int(str(v))
+    except ValueError:
+        raise UsageError(f"--{name} must be an integer") from None
 
 
 class Broker:
@@ -224,6 +269,13 @@ class Broker:
         }
 
     def invoke(self, argv: list[str], stdin: str | None, data_lag_ms: int = 0) -> tuple[dict, int]:
+        env, code = self._invoke(argv, stdin, data_lag_ms)
+        # broker.md pairs exit 1 with "rejected" and exit 2 with "error".
+        if code == 1 and isinstance(env, dict) and env.get("status") == "error":
+            env["status"] = "rejected"
+        return env, code
+
+    def _invoke(self, argv: list[str], stdin: str | None, data_lag_ms: int) -> tuple[dict, int]:
         try:
             words, flags, params = parse_argv(argv)
             if not words:
@@ -231,6 +283,10 @@ class Broker:
             if flags.get("help") is True or words[0] == "help":
                 return self._help(words), 0
             cmd = words[0]
+            command = " ".join(words[:2]) if cmd == "order" else cmd
+            bad = unknown_flags(argv, command)
+            if bad and self.trex.unknown_flags == "reject":
+                raise UsageError(f"unknown flag --{bad[0]} for '{command}'; see 'alva broker describe --command \"{command}\"'")
             if cmd == "order":
                 sub = words[1] if len(words) > 1 else ""
                 handler = {
@@ -242,7 +298,10 @@ class Broker:
                 if handler is None:
                     raise UsageError(f"unknown order subcommand {sub!r}")
                 if sub == "place":
-                    return handler(flags, params, self._stdin_obj(stdin))
+                    body = self._stdin_obj(stdin)
+                    if flags.get("stdin") and body is None:
+                        raise UsageError("--stdin needs a JSON object on standard input")
+                    return handler(flags, params, body)
                 return handler(flags)
             handler = {
                 "describe": self.describe,
@@ -259,7 +318,7 @@ class Broker:
                 raise UsageError(f"unknown broker command {cmd!r}; run 'alva broker describe'")
             return handler(flags)
         except UsageError as e:
-            return self._error("invalid_argument", str(e)), 1
+            return self._error("invalid_argument", str(e), "rejected"), 1
 
     # ================================================================ helpers
 
@@ -360,9 +419,12 @@ class Broker:
             "nextCommands": ["alva broker describe --venue <venue>", "alva trading accounts"],
         }, 0
 
-    def account_view(self, a: Account) -> dict:
-        return {"id": a.id, "name": a.name, "exchange": a.exchange, "venue": a.venue, "paper": a.paper,
+    def account_view(self, a: Account, rest: bool = False) -> dict:
+        view = {"id": a.id, "name": a.name, "exchange": a.exchange, "venue": a.venue, "paper": a.paper,
                 "identifier": a.identifier, "createdAtMs": a.created_ms, "subscriptions": []}
+        if rest:
+            del view["venue"]  # not a TradingAccount field in the toolkit types
+        return view
 
     def accounts_cmd(self, flags: dict) -> tuple[dict, int]:
         return {"items": [self.account_view(a) for a in self.accounts.values()]}, 0
@@ -405,8 +467,8 @@ class Broker:
         if m is None:
             return self._error("unknown_symbol", f"{sym} is not listed on {v.name}"), 1
         tf = str(flags.get("timeframe", "1h"))
-        limit = int(flags.get("limit", 100))
-        since = int(flags["since"]) if flags.get("since") not in (None, True) else None
+        limit = int_flag(flags, "limit", 100)
+        since = int_flag(flags, "since", None)
         try:
             rows = self.md.ohlcv(m.instrument, tf, self.clock.now_ms() - lag_ms, since, limit)
         except ValueError as e:
@@ -427,7 +489,9 @@ class Broker:
         try:
             params = json.loads(str(flags.get("params", "{}")))
         except json.JSONDecodeError:
-            return self._error("invalid_argument", "--params must be JSON"), 1
+            params = None
+        if not isinstance(params, dict):
+            return self._error("invalid_argument", "--params must be a JSON object"), 1
         if method in ("fetchTicker", "fetch_ticker"):
             return self.quote({"venue": v.name, "symbol": params.get("symbol", "")})
         if method in ("fetchTime", "fetch_time"):
@@ -482,15 +546,20 @@ class Broker:
     def order_list(self, flags: dict) -> tuple[list, int]:
         acct = self._account(flags)
         v = self.venues[acct.venue]
-        status = str(flags.get("status", "all"))
+        status = str(flags.get("status", "all")).lower()
+        if status != "all" and status not in LIST_STATUS:
+            raise UsageError(f"--status must be one of all, {', '.join(LIST_STATUS)}")
         sym = flags.get("symbol")
+        limit = int_flag(flags, "limit", 50)
+        since = int_flag(flags, "since", None)
         rows = [o for o in v.orders.values() if o.account == acct.id]
         if status != "all":
-            rows = [o for o in rows if o.status == status]
+            rows = [o for o in rows if o.status in LIST_STATUS[status]]
         if sym:
             rows = [o for o in rows if o.symbol == sym]
-        limit = int(flags.get("limit", 50))
-        return [v.raw(o) for o in rows[-limit:]], 0
+        if since is not None:
+            rows = [o for o in rows if o.created_ms >= since]
+        return [v.raw(o) for o in rows[-limit:]] if limit > 0 else [], 0
 
     # ================================================================ orders: writes
 
@@ -533,8 +602,17 @@ class Broker:
             "intent_id": get("intent-id", "intentId"),
             "coid": get("client-order-id", "clientOrderId"),
             "dry_run": bool(flags.get("dry-run")) or bool(body.get("dryRun")),
-            "params": dict(p.split("=", 1) for p in params if "=" in p) | dict(body.get("params", {}) or {}),
+            "params": {},
         }
+        for p in params:
+            k, eq, val = p.partition("=")
+            if not eq or not k:
+                raise UsageError(f"--param must be key=value, got {p!r}")
+            req["params"][k] = val
+        body_params = body.get("params") or {}
+        if not isinstance(body_params, dict):
+            raise UsageError("params must be a JSON object of venue parameters")
+        req["params"].update({str(k): str(val) for k, val in body_params.items()})
         for k in ("account", "symbol", "side", "amount"):
             if req[k] in (None, True, ""):
                 raise UsageError(f"--{k} is required")
@@ -606,16 +684,19 @@ class Broker:
         now = self.clock.now_ms()
 
         if req["dry_run"]:
+            # The clientOrderId a live run with the same handle would use. Without
+            # a handle a live run is refused, so the id is only a fingerprint.
+            if req["intent_id"] is not None:
+                coid = req["coid"] or self._coid_for(v, req["intent_id"])
+            elif req["coid"] is not None:
+                coid = req["coid"]
+            else:
+                coid = self._coid_for(v, stable_hash(acct.id, v.name, req["symbol"], req["side"], req["amount"],
+                                                     req["type"], req["price"], trading_day(now), length=24))
             ok, reason, est = self._admit(acct, v, req)
-            if not ok:
-                env = self._error(reason["code"], reason["message"], "rejected")
-                env.update(admitted=False, dryRun=True)
-                return env, 1
-            coid = self._coid_for(v, "dry-" + stable_hash(acct.id, v.name, req["symbol"], req["side"],
-                                                        req["amount"], req["type"], req["price"],
-                                                        trading_day(now), length=24))
-            return {"schemaVersion": 2, "status": "admitted", "admitted": True, "dryRun": True,
-                    "clientOrderId": coid, "estimate": est, "ts": now}, 0
+            env = self._spine(v, None, "admitted" if ok else "rejected", reason, req["intent_id"], coid)
+            env.update(admitted=ok, dryRun=True, estimate=est or None)
+            return env, 0 if ok else 1
 
         intent = req["intent_id"]
         if intent is not None:
@@ -681,7 +762,7 @@ class Broker:
         rec.attempts += 1
         now = self.clock.now_ms()
         vreq = {"account": rec.account, "symbol": req["symbol"], "side": req["side"], "amount": req["amount"],
-                "type": req["type"], "price": req["price"], "coid": rec.coid}
+                "type": req["type"], "price": req["price"], "coid": rec.coid, "params": req["params"]}
         op = {"route": "broker", "cmd": "order place", "live": True, "venue": v.name, "symbol": req["symbol"],
               "account": rec.account, "intent": rec.intent_id, "trex_attempt": rec.attempts}
         fault = self.nemesis.pick("venue", op)
@@ -739,11 +820,14 @@ class Broker:
         if res.kind == "conflict":
             return self._spine(v, None, "rejected", {"code": res.code, "message": res.message},
                                rec.intent_id, rec.coid), 1
+        venue_error = {"error": {"code": res.code, "message": res.message}}
         if res.code == "duplicate_client_order_id":
             code = self.trex.duplicate_reject_exit
             status = "rejected" if code == 1 else "error"
-            return self._spine(v, None, status, {"code": res.code, "message": res.message}, rec.intent_id, rec.coid), code
-        return self._spine(v, None, "rejected", {"code": res.code, "message": res.message}, rec.intent_id, rec.coid), 1
+            env = self._spine(v, None, status, {"code": res.code, "message": res.message}, rec.intent_id, rec.coid)
+            return dict(env, raw=venue_error), code
+        env = self._spine(v, None, "rejected", {"code": res.code, "message": res.message}, rec.intent_id, rec.coid)
+        return dict(env, raw=venue_error), 1
 
     def _settle(self, rec: IntentRecord, v: Venue, res: SubmitResult) -> tuple[dict, int]:
         env, code = self._map_submit(rec, res)
@@ -769,10 +853,14 @@ class Broker:
             if code == 1:
                 err["status"] = "rejected"
             return err, code
+        intent = str(flags["intent-id"]) if flags.get("intent-id") else None
         res = v.cancel(o.id, self.clock.now_ms())
         if res.kind == "rejected":
-            return self._spine(v, res.order, "rejected", {"code": res.code, "message": res.message}), 1
-        return self._spine(v, res.order), 0
+            # Already terminal: report the order as it stands (a filled order
+            # is not "never placed"), with the reason the cancel did nothing.
+            env = self._spine(v, res.order, intent=intent, reason={"code": res.code, "message": res.message})
+            return env, 1 if env["status"] == "rejected" else 0
+        return self._spine(v, res.order, intent=intent), 0
 
     # ================================================================ trading REST surface
 
@@ -788,26 +876,72 @@ class Broker:
             mv = p["notional"] or 0.0
             equity += mv
             upnl += p["unrealizedPnl"] or 0.0
-            assets.append({"symbol": p["symbol"], "side": "long", "quantity": p["contracts"],
+            assets.append({"symbol": self.canonical(a, p["symbol"]), "side": "long", "quantity": p["contracts"],
                            "entryPrice": p["entryPrice"], "currentPrice": p["markPrice"],
                            "marketValue": mv, "unrealizedPnl": p["unrealizedPnl"]})
         for x in assets:
             x["allocation"] = x["marketValue"] / equity if equity else 0.0
         return {"equity": round(equity, 2), "cash": round(cash, 2), "unrealizedPnl": round(upnl, 2), "assets": assets}
 
-    def trading_orders(self, account_id: str, limit: int | None = None) -> list[dict]:
+    def trading_orders(self, account_id: str, limit: int | None = None, source: str | None = None,
+                       since_ms: int | None = None) -> list[dict]:
         a = self.accounts[account_id]
         v = self.venues[a.venue]
         out = []
         for o in v.orders.values():
             if o.account != a.id:
                 continue
-            out.append({"orderId": o.id, "symbol": o.symbol, "side": o.side, "requestedQty": o.amount,
+            if source and self.order_source.get(o.id, "broker") != source:
+                continue
+            if since_ms is not None and o.created_ms < since_ms:
+                continue
+            out.append({"orderId": o.id, "symbol": self.canonical(a, o.symbol), "side": o.side, "requestedQty": o.amount,
                         "filledQty": o.filled, "price": o.average or o.limit_price or 0.0,
                         "status": {"closed": "filled"}.get(o.status, o.status), "rejectReason": o.reject_reason,
                         "source": self.order_source.get(o.id, "broker"), "sourcePlaybook": "", "dryRun": False,
                         "createdAtMs": o.created_ms})
         return out[-limit:] if limit else out
+
+    def equity_history(self, account_id: str, timeframe: str = "1d", since_ms: int | None = None,
+                       until_ms: int | None = None) -> list[dict]:
+        """Equity at each timeframe step, rebuilt from the starting balances,
+        the fill ledger and the price at that time."""
+        step = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000,
+                "1d": 86_400_000, "1w": 604_800_000}.get(timeframe)
+        if step is None:
+            raise ValueError(f"timeframe must be one of 1m, 5m, 15m, 1h, 4h, 1d, 1w, got {timeframe!r}")
+        a = self.accounts[account_id]
+        v = self.venues[a.venue]
+        now = self.clock.now_ms()
+        until = min(until_ms if until_ms is not None else now, now)
+        since = since_ms if since_ms is not None else until - 30 * step
+        since = max(since, until - 1000 * step)
+        if since > until:
+            return []
+        fills = [f for f in self.rec.fills if f["account"] == a.id and f["venue"] == v.name]
+        quotes = {m.quote for m in v.markets.values()}
+        points, base = [], None
+        t = until - (until - since) // step * step
+        while t <= until:
+            hold = dict(v.initial.get(a.id, {}))
+            for f in fills:
+                if f["time"] > t:
+                    continue
+                m = v.markets[f["symbol"]]
+                sign = 1 if f["side"] == "buy" else -1
+                hold[m.base] = hold.get(m.base, 0.0) + sign * f["qty"]
+                hold[m.quote] = hold.get(m.quote, 0.0) - sign * f["qty"] * f["price"] - f["fee"]
+            equity = sum(q for asset, q in hold.items() if asset in quotes)
+            for m in v.markets.values():
+                if hold.get(m.base) and m.quote in quotes and m.base not in quotes:
+                    equity += hold[m.base] * (self.md.price(m.instrument, t) or 0.0)
+                    hold[m.base] = 0.0  # count each asset once even if it trades on several markets
+            base = equity if base is None else base
+            pnl = equity - base
+            points.append({"timestamp": t, "equity": round(equity, 2), "pnl": round(pnl, 2),
+                           "pnlPct": round(pnl / base * 100, 4) if base else 0.0})
+            t += step
+        return points
 
     def execute_signal(self, account_id: str, signal_json: str, dry_run: bool) -> tuple[dict, int]:
         """`alva trading execute`: allocate-weight signals, no idempotency key."""
@@ -821,29 +955,43 @@ class Broker:
                 signals = [signals]
         except json.JSONDecodeError:
             return {"status": "error", "orders": [], "error": "signal must be JSON"}, 400
+        if not isinstance(signals, list) or not all(isinstance(x, dict) for x in signals):
+            return {"status": "error", "orders": [], "error": "signal must be a list of signal objects"}, 400
         now = self.clock.now_ms()
         port = self.portfolio(a.id)
         orders = []
         for s in signals:
-            ins = (s or {}).get("instruction", {})
-            if ins.get("type") != "allocate":
+            ins = s.get("instruction") or {}
+            if not isinstance(ins, dict) or ins.get("type") != "allocate":
                 return {"status": "error", "orders": [], "error": "only allocate instructions are supported"}, 400
-            for w in ins.get("weights", []):
-                sym = self._venue_symbol(v, str(w.get("symbol", "")))
+            for w in ins.get("weights") or []:
+                canonical = str(w.get("symbol", ""))
+                problem = self._symbol_problem(a, canonical)
+                if problem:
+                    return {"status": "error", "orders": [], "error": problem}, 400
+                sym = self._venue_symbol(v, canonical)
                 if sym is None:
-                    orders.append({"orderId": "", "symbol": w.get("symbol"), "side": "", "requestedQty": 0,
+                    orders.append({"orderId": "", "symbol": canonical, "side": "", "requestedQty": 0,
                                    "filledQty": 0, "price": 0, "status": "rejected", "rejectReason": "unknown_symbol"})
                     continue
                 px = v.mid(sym, now) or 0.0
-                held = next((x["quantity"] for x in port["assets"] if x["symbol"] == sym), 0.0)
+                held = next((x["quantity"] for x in port["assets"] if x["symbol"] == canonical), 0.0)
                 target = float(w.get("weight", 0)) * port["equity"] / px if px else 0.0
                 delta = target - held
                 if abs(delta) * px < 1.0:
                     continue
                 side, qty = ("buy", delta) if delta > 0 else ("sell", -delta)
                 qty = round(qty, v.markets[sym].amount_precision)
+                # The same trex admission gate (risk rules, limits) as `alva broker`.
+                ok, reason, _ = self._admit(a, v, {"venue": None, "symbol": sym, "amount": qty, "type": "market",
+                                                   "price": None})
+                if not ok:
+                    orders.append({"orderId": "", "symbol": canonical, "side": side, "requestedQty": qty,
+                                   "filledQty": 0, "price": round(px, 2), "status": "rejected",
+                                   "rejectReason": reason["code"]})
+                    continue
                 if dry_run:
-                    orders.append({"orderId": "", "symbol": sym, "side": side, "requestedQty": qty, "filledQty": 0,
+                    orders.append({"orderId": "", "symbol": canonical, "side": side, "requestedQty": qty, "filledQty": 0,
                                    "price": round(px, 2), "status": "simulated"})
                     continue
                 res = v.submit({"account": a.id, "symbol": sym, "side": side, "amount": qty, "type": "market",
@@ -852,18 +1000,56 @@ class Broker:
                     self.order_source[res.order.id] = "trading"
                     self._count_daily(a.id, res.order)
                     o = res.order
-                    orders.append({"orderId": o.id, "symbol": sym, "side": side, "requestedQty": qty,
+                    orders.append({"orderId": o.id, "symbol": canonical, "side": side, "requestedQty": qty,
                                    "filledQty": o.filled, "price": o.average or px,
                                    "status": {"closed": "filled"}.get(o.status, o.status)})
                 else:
-                    orders.append({"orderId": "", "symbol": sym, "side": side, "requestedQty": qty, "filledQty": 0,
+                    orders.append({"orderId": "", "symbol": canonical, "side": side, "requestedQty": qty, "filledQty": 0,
                                    "price": round(px, 2), "status": "rejected", "rejectReason": res.code})
         return {"status": "ok", "orders": orders}, 200
 
+    # Trading REST symbols are canonical Arrays pairs that match the account's
+    # exchange (trading.md): binance_spot -> BINANCE_SPOT_BTC_USDT, alpaca ->
+    # US_SPOT_AAPL_USD. The simulator has spot markets only. Assumption: an
+    # exchange without a suffix uses <EXCHANGE>_SPOT_ for its spot pairs, and
+    # Alpaca crypto uses US_SPOT_ like its stocks (the docs show neither).
+
+    def _symbol_prefix(self, a: Account) -> str:
+        ex = a.exchange.lower()
+        if ex == "alpaca":
+            return "US_SPOT_"
+        return ex.removesuffix("_spot").upper() + "_SPOT_"
+
+    def canonical(self, a: Account, venue_symbol: str) -> str:
+        m = self.venues[a.venue].markets[venue_symbol]
+        return f"{self._symbol_prefix(a)}{m.base}_{m.quote}"
+
+    def _symbol_problem(self, a: Account, canonical: str) -> str | None:
+        parts = canonical.split("_")
+        if len(parts) != 4 or not all(p.isalnum() and p.upper() == p for p in parts):
+            return (f"symbol {canonical!r} is not a canonical trading pair such as "
+                    f"{self._symbol_prefix(a)}BTC_USDT; resolve it with 'alva trading-pairs'")
+        if not canonical.startswith(self._symbol_prefix(a)):
+            return f"symbol {canonical} does not match account exchange {a.exchange}"
+        return None
+
+    def trading_pairs(self, q: str) -> list[dict]:
+        """`alva trading-pairs search`: the canonical pairs of the simulated
+        accounts' markets whose ticker or full pair matches q."""
+        out, seen = [], set()
+        for a in self.accounts.values():
+            for sym, m in self.venues[a.venue].markets.items():
+                pair = self.canonical(a, sym)
+                if pair in seen or q.strip().upper() not in (m.base.upper(), pair):
+                    continue
+                seen.add(pair)
+                out.append({"trading_pair": pair, "base": m.base, "market": pair.split("_")[0],
+                            "instrument_type": "spot", "quote": m.quote,
+                            "type": ("stock" if m.session == "us_equity" else "crypto") + "-spot"})
+        return out
+
     def _venue_symbol(self, v: Venue, canonical: str) -> str | None:
         """'BINANCE_SPOT_BTC_USDT' -> 'BTC/USDT', 'US_SPOT_AAPL_USD' -> 'AAPL'."""
-        if canonical in v.markets:
-            return canonical
         parts = canonical.split("_")
         if len(parts) != 4 or parts[1] != "SPOT":
             return None
