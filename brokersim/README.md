@@ -23,7 +23,7 @@ and is meant for `alva-ai/skills` v1.23.0. Python 3.10+, standard library only.
 ```bash
 cd brokersim
 python3 -m brokersim fetch-data          # 24 pinned Binance kline files (~0.9 MB), SHA-256 checked
-python3 -m brokersim selftest            # checker self-test + 40 unit tests
+python3 -m brokersim selftest            # checker self-test + 46 unit tests
 python3 -m brokersim serve --scenario scenarios/v2-drop-after-fill.json --out runs/v2
 ```
 
@@ -48,6 +48,9 @@ python3 -m brokersim replay runs/v2      # re-runs the recorded requests: identi
 
 `tools/smoke_cli.sh <scenario>` does all of the above with the real CLI in one
 go; it refuses to run unless the endpoint is localhost.
+
+Restarting `serve` with the same `--out` moves the earlier run into
+`<out>/archive/<time>/` instead of overwriting it.
 
 ## How it fits together
 
@@ -187,6 +190,10 @@ printed at start-up.
 * **Anomalies** (contract smells): an exit 1 ("never placed") for an id whose
   order exists; an exit 0 `open` followed by a venue rejection; a lookup by
   client order id that matched several orders; a fill no intent accounts for.
+
+* **harness_ok**: false when the simulator itself raised an exception during the
+  run (the request got HTTP 500 and the error is in `history.jsonl`). Such a run
+  measured the simulator, not the agent; discard it.
 
 Before trusting it, `selftest` runs the checker on known histories: a correct
 one, one where nothing happened, and two double fills.

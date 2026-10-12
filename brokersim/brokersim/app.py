@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import traceback
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs
 
@@ -74,6 +75,14 @@ class App:
     # ------------------------------------------------------------ entry
 
     def handle(self, req: Request) -> Response:
+        try:
+            return self._handle(req)
+        except Exception as e:  # a simulator bug must not look like a lost reply
+            self.sim.rec.event("sim", "error", "internal", {"path": req.path, "error": repr(e)[:500],
+                                                             "trace": traceback.format_exc(limit=6)[-2000:]})
+            return api_error(500, "INTERNAL", "internal error")
+
+    def _handle(self, req: Request) -> Response:
         if req.path.startswith(CONTROL_PREFIX):
             return self._control(req)
         sim = self.sim
@@ -184,10 +193,13 @@ class App:
             if isinstance(env, dict):
                 summary.update({k: env.get(k) for k in ("status", "reason", "orderId", "intentId", "filled") if k in env})
             return Response.of_json(200, {"envelope": env, "exit": code}), code, summary
-        if route == "trading":
-            return self._trading(req, op)
-        if route == "fs":
-            return self._fs(req, op, corrupt=(kind == "corrupt"))
+        try:
+            if route == "trading":
+                return self._trading(req, op)
+            if route == "fs":
+                return self._fs(req, op, corrupt=(kind == "corrupt"))
+        except (ValueError, TypeError, KeyError, AttributeError) as e:
+            return api_error(400, "INVALID_ARGUMENT", f"bad request: {e}"), 1, {"http": 400}
         if route == "me":
             u = self.sim.scenario["user"]
             return Response.of_json(200, {

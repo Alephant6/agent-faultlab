@@ -264,7 +264,7 @@ class Broker:
     # ================================================================ helpers
 
     def _stdin_obj(self, stdin: str | None) -> dict | None:
-        if not stdin:
+        if not stdin or not isinstance(stdin, str):
             return None
         try:
             v = json.loads(stdin)
