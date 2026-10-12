@@ -101,7 +101,10 @@ def load_market_data(data: dict) -> MarketData:
         else:
             raise ValueError(f"unknown data format {f['format']!r}")
     if data.get("bar_dir"):
-        load_bar_dir(md, resolve(data["bar_dir"]), data.get("sessions"))
+        bar_dir = os.path.expanduser(os.path.expandvars(data["bar_dir"]))
+        if "$" in bar_dir:
+            raise ValueError(f"data.bar_dir {data['bar_dir']!r}: set the environment variable it names")
+        load_bar_dir(md, resolve(bar_dir), data.get("sessions"))
     for f in data.get("local_csv", []):
         load_local_csv(md, f["instrument"], resolve(f["path"]), f.get("session", "us_equity"))
     return md

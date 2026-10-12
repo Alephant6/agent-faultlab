@@ -418,9 +418,9 @@ class Venue:
         if o.status != "open" or not self.is_open(o.symbol, now):
             return
         # An order queued while the market was closed executes at the open.
-        at = max(now if o.created_ms >= self.session_bounds(o.symbol, now)[0] else
-                 self.session_bounds(o.symbol, now)[0], o.created_ms)
-        ba = self.bid_ask(o.symbol, at)
+        open_ms = self.session_bounds(o.symbol, now)[0]
+        queued = self.markets[o.symbol].session != "24x7" and o.created_ms < open_ms
+        ba = self.bid_ask(o.symbol, open_ms if queued else now)
         if ba is None:
             return
         bid, ask = ba
@@ -428,7 +428,7 @@ class Venue:
         if o.type == "limit" and o.limit_price is not None:
             if (o.side == "buy" and px > o.limit_price) or (o.side == "sell" and px < o.limit_price):
                 return  # not marketable: rest
-        self._fill(o, o.amount - o.filled, px, now)
+        self._fill(o, o.amount - o.filled, px, open_ms if queued else now)
 
     def _fill(self, o: Order, qty: float, px: float, now: int) -> None:
         m = self.markets[o.symbol]

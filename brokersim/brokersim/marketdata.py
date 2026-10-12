@@ -155,6 +155,19 @@ class MarketData:
                 return p
         return None
 
+    def traded_between(self, name: str, lo_ms: int, hi_ms: int) -> bool | None:
+        """Whether any bar of `name` overlaps [lo, hi]: True/False where some
+        series spans that window, None where no series covers it."""
+        answer = None
+        for s in self._finest(name):
+            if not s.bars or s.first_ms > lo_ms or s.last_ms < hi_ms:
+                continue
+            i = s.bar_index_at(hi_ms)
+            if i >= 0 and s.bars[i].close_ms >= lo_ms:
+                return True
+            answer = False
+        return answer
+
     def day_stats(self, name: str, t_ms: int) -> dict:
         """Open/high/low/volume of the UTC day so far, from the finest series."""
         day_start = t_ms - t_ms % DAY_MS

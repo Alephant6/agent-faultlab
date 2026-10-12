@@ -1,0 +1,31 @@
+{
+  "name": "alpaca-paper-stocks",
+  "description": "Alpaca paper account trading US stocks and crypto. Stocks follow the regular session (09:30-16:00 New York, no trading on 2025-06-19): orders sent while it is closed wait and fill at the next open. Fractional quantities; Alpaca's $1 minimum notional is not modelled. Needs BROKERSIM_BAR_DIR = the market-data output directory with alpaca/{AAPL,NVDA,SPY} and binance/{BTCUSDT,ETHUSDT}.",
+  "data": {"manifest": null, "bar_dir": "${BROKERSIM_BAR_DIR}"},
+  "venues": {
+    "alpaca": {
+      "preset": "alpaca",
+      "markets": [
+        {"symbol": "AAPL", "instrument": "AAPL", "base": "AAPL", "quote": "USD", "min_amount": 0.001, "amount_precision": 9, "price_precision": 2, "session": "us_equity"},
+        {"symbol": "NVDA", "instrument": "NVDA", "base": "NVDA", "quote": "USD", "min_amount": 0.001, "amount_precision": 9, "price_precision": 2, "session": "us_equity"},
+        {"symbol": "SPY", "instrument": "SPY", "base": "SPY", "quote": "USD", "min_amount": 0.001, "amount_precision": 9, "price_precision": 2, "session": "us_equity"},
+        {"symbol": "BTC/USD", "instrument": "BTCUSDT", "base": "BTC", "quote": "USD", "min_amount": 0.00001, "amount_precision": 5, "price_precision": 2},
+        {"symbol": "ETH/USD", "instrument": "ETHUSDT", "base": "ETH", "quote": "USD", "min_amount": 0.0001, "amount_precision": 4, "price_precision": 2}
+      ]
+    }
+  },
+  "accounts": [
+    {
+      "id": "5520331",
+      "name": "Alpaca paper",
+      "venue": "alpaca",
+      "exchange": "alpaca",
+      "paper": true,
+      "identifier": "PK8V****2QX7",
+      "balances": {"USD": 100000}
+    }
+  ],
+  "expect": [
+    {"account": "5520331", "symbol": "AAPL", "side": "buy", "qty": 0.01}
+  ]
+}

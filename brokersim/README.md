@@ -23,7 +23,7 @@ and is meant for `alva-ai/skills` v1.23.0. Python 3.10+, standard library only.
 ```bash
 cd brokersim
 python3 -m brokersim fetch-data          # 24 pinned Binance kline files (~0.9 MB), SHA-256 checked
-python3 -m brokersim selftest            # checker self-test + 35 unit tests
+python3 -m brokersim selftest            # checker self-test + 40 unit tests
 python3 -m brokersim serve --scenario scenarios/v2-drop-after-fill.json --out runs/v2
 ```
 
@@ -116,9 +116,18 @@ history.jsonl + ledger.jsonl + requests.jsonl  ──>  checker, replay
   AAPL, NVDA and SPY from Alpaca with a free key):
   `"data": {"manifest": null, "bar_dir": "<its --out dir>"}`. Each file is
   checked against that directory's `manifest.json`, and Alpaca daily bars are
-  placed on the New York regular session. A daily CSV with a
+  placed on the New York regular session. `bar_dir` may name an environment
+  variable (`"${BROKERSIM_BAR_DIR}"`). A daily CSV with a
   `Date,Open,High,Low,Close,Volume` header can also be added through
   `data.local_csv`.
+* **Trading hours** (`venue.py`). A market with `"session": "us_equity"`
+  trades 09:30 to 16:00 New York time on days that have bars in the data, so
+  weekends and 2025-06-19 (Juneteenth) are closed while crypto keeps trading.
+  An order sent while the market is closed is accepted and waits, then fills
+  at the next session's opening price (Alpaca's behaviour for market orders);
+  the venue setting `closed_market: "reject"` turns that into an exit 1
+  `market_closed`. `POST /__sim/advance {"ms": ...}` moves the clock across a
+  weekend.
 
 ## Determinism
 
@@ -150,6 +159,7 @@ orders per day). Starters in `scenarios/`:
 | `g5-rate-limited.json` | the first three broker reads get HTTP 429 with Retry-After |
 | `g6a-consent-unreadable.json` | the scheduled-trading consent record exists, but every read fails with 500 |
 | `alpaca-paper.json` | an Alpaca paper account: orders are accepted, then fill on a later call |
+| `alpaca-paper-stocks.json` | Alpaca paper with AAPL, NVDA and SPY on market hours plus BTC/USD and ETH/USD; needs `BROKERSIM_BAR_DIR` |
 
 A fault rule:
 
