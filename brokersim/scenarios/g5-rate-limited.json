@@ -22,5 +22,12 @@
       }
     }
   ],
-  "expect": []
+  "expect": [
+    {
+      "account": "4471902",
+      "symbol": "BTC/USDT",
+      "side": "buy",
+      "qty": 0.01
+    }
+  ]
 }

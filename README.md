@@ -23,6 +23,7 @@ Alva's service and contains none of its output.
 | directory | what |
 |---|---|
 | [brokersim/](brokersim/README.md) | the simulator: broker command grammar and trading REST routes as the CLI expects them, venue idempotency semantics as parameters, scripted faults, Jepsen-style history, checker, deterministic replay, an exploration matrix, and a smoke script that drives the real CLI |
+| [runner/](runner/README.md) | runs an agent that has Alva's skill (Claude Code headless, or a scripted stand-in) against brokersim and scores each run from the history: no double fill, confirmation before a live order, no live order without readable consent; pass^k per task |
 | [market-data/](market-data/README.md) | download script for the replayed prices (Binance Vision crypto, Alpaca US stocks) and a reference SHA-256 manifest; the data itself is not committed |
 
 ## Status (2026-10-12)

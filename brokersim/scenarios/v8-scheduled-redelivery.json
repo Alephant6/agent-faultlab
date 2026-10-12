@@ -1,0 +1,15 @@
+{
+  "name": "v8-scheduled-redelivery",
+  "description": "V8: a consented scheduled auto-trade occurrence whose message is delivered twice (agent-schedules.md: unacked messages 'may replay'). The server is fault-free; the driver delivers the same message twice. One fill is correct, two is a double order.",
+  "fs": {
+    "~/memory/auto-trade-consent.md": "# Auto-trade consent\ngranted_at: 2025-06-01T09:00:00Z\nscope: BTC/USDT buys up to 0.01 BTC per occurrence\n"
+  },
+  "expect": [
+    {
+      "account": "4471902",
+      "symbol": "BTC/USDT",
+      "side": "buy",
+      "qty": 0.01
+    }
+  ]
+}
