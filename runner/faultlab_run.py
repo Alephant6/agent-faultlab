@@ -18,6 +18,7 @@ standard library only.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import io
 import json
 import math
@@ -451,6 +452,7 @@ def main(argv=None) -> int:
         else:
             s.add_argument("--tasks", default="all", help="comma-separated task names, or all")
             s.add_argument("--k", type=int, default=5)
+            s.add_argument("--jobs", type=int, default=1, help="episodes run at the same time")
     r = sub.add_parser("report")
     r.add_argument("batch_dir")
     r.add_argument("--k", type=int)
@@ -482,29 +484,37 @@ def main(argv=None) -> int:
             version = subprocess.run([a.claude_bin, "--version"], capture_output=True, text=True).stdout.strip()
         json.dump({"agent": a.agent, "agent_version": version, "model": a.model, "k": a.k, "tasks": names, "skill": sk,
                    "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f, indent=2)
-    failures = 0
-    for i in range(a.k):  # round-robin, so a batch stopped early still covers every task
-        for name in names:
-            ep = os.path.join(a.out, name, f"{i:02d}")
-            if done_ok(ep):
-                continue  # resume an interrupted batch; runs the agent never got to try are redone
-            shutil.rmtree(ep, ignore_errors=True)
-            try:
-                res = run_episode(name, DRIVERS[a.agent](a), ep, tasks, skill_dir, alva_bin, a.bar_dir)
-            except Exception as e:  # keep going; the episode has no result.json and reruns on resume
-                print(f"{name} #{i}: episode failed: {e!r}", flush=True)
-                res = {"agent_ok": False}
-            else:
-                print(f"{name} #{i}: safe={res['safe']} complete={res['complete']} agent_ok={res['agent_ok']} "
-                      f"({res['seconds']} s)", flush=True)
-            failures = 0 if res["agent_ok"] else failures + 1
-            if failures >= 2:
+    # Round-robin order, so a batch stopped early still covers every task.
+    todo = [(i, name) for i in range(a.k) for name in names
+            if not done_ok(os.path.join(a.out, name, f"{i:02d}"))]  # resume; runs the agent never tried are redone
+
+    def one(i: int, name: str) -> dict:
+        ep = os.path.join(a.out, name, f"{i:02d}")
+        shutil.rmtree(ep, ignore_errors=True)
+        try:
+            res = run_episode(name, DRIVERS[a.agent](a), ep, tasks, skill_dir, alva_bin, a.bar_dir)
+        except Exception as e:  # keep going; the episode has no result.json and reruns on resume
+            print(f"{name} #{i}: episode failed: {e!r}", flush=True)
+            return {"agent_ok": False}
+        print(f"{name} #{i}: safe={res['safe']} complete={res['complete']} agent_ok={res['agent_ok']} "
+              f"({res['seconds']} s)", flush=True)
+        return res
+
+    failures, stopped = 0, False
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
+        futures = [pool.submit(one, i, name) for i, name in todo]
+        for fut in concurrent.futures.as_completed(futures):
+            if fut.cancelled():
+                continue
+            failures = 0 if fut.result()["agent_ok"] else failures + 1
+            if failures >= 2 and not stopped:
+                stopped = True
                 print("two runs in a row failed before the agent could act (login, usage limit, crash); "
-                      "stopping. Fix it and rerun the same command to resume.", flush=True)
-                print(report(a.out, a.k))
-                return 2
+                      "stopping after the runs in progress. Fix it and rerun the same command to resume.", flush=True)
+                for f in futures:
+                    f.cancel()
     print(report(a.out, a.k))
-    return 0
+    return 2 if stopped else 0
 
 
 if __name__ == "__main__":

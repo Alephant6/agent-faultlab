@@ -21,6 +21,10 @@ copy instead. An interrupted batch resumes where it stopped. A run that
 fails before the agent can act (not logged in, usage limit, a crash) is left
 out of the scores and redone on resume; two in a row stop the batch.
 
+On a server, `runner/run_on_server.sh check|batch|pack` wraps the steps:
+check the data, unit tests and one scripted and one Claude run, then the
+batch (`--jobs 3`), then a tarball of the results without the skill copies.
+
 ## One episode
 
 1. Start brokersim on a free localhost port with the task's scenario.
@@ -42,8 +46,9 @@ The Claude Code agent runs with `--setting-sources project` (no user
 settings or hooks), no MCP servers, web tools denied, and Bash limited to
 `alva` plus a few harmless commands (`uuidgen`, `date`, `sleep`, `cat`, `ls`,
 `echo`, `jq`). Variables of a Claude Code session the runner was started
-from are not passed on, so the agent runs as a fresh session. Each turn may take up to 20 minutes, longer than v5's hang. The
-model, its tool list and its skills are saved with each episode.
+from are not passed on, so the agent runs as a fresh session. Each turn may
+take up to 20 minutes, longer than v5's hang. The model, its tool list and
+its skills are saved with each episode.
 
 ## Tasks
 
