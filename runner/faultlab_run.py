@@ -400,7 +400,9 @@ def load_results(batch_dir: str) -> list[tuple[str, list[tuple[str, dict]]]]:
             p = os.path.join(tdir, ep, "result.json")
             if os.path.exists(p):
                 with open(p, encoding="utf-8") as f:
-                    results.append((ep, json.load(f)))
+                    r = json.load(f)
+                r.setdefault("blocked", any(t.get("permission_denials") for t in r["turns"]))  # older results
+                results.append((ep, r))
         if results:
             rows.append((task, results))
     return rows
