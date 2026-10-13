@@ -268,13 +268,14 @@ class Broker:
         intent = flags.get("intent-id") or body.get("intentId")
         coid = flags.get("client-order-id") or body.get("clientOrderId")
         dry = bool(flags.get("dry-run")) or bool(body.get("dryRun"))
+        help_ = flags.get("help") is True or words[:1] == ["help"]  # answered with usage; nothing is placed
         account = flags.get("account") or body.get("account")
         key = f"i:{intent}" if intent else (f"c:{coid}" if coid else None)
         acct = self.accounts.get(str(account)) if account else None
         return {
             "route": "broker",
             "cmd": cmd,
-            "live": cmd == "order place" and not dry,
+            "live": cmd == "order place" and not dry and not help_,
             "dry_run": dry,
             "venue": flags.get("venue") or body.get("venue") or (acct.venue if acct else None),
             "symbol": flags.get("symbol") or body.get("symbol"),

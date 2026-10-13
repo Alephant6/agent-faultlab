@@ -83,6 +83,18 @@ class FaultTest(unittest.TestCase):
         self.assertEqual((gcode, got["status"]), (0, "closed"))
         self.assertEqual(len(sim.rec.fills), 1)
 
+    def test_help_on_order_place_is_not_a_live_order(self):
+        sim, app, cli = make({"faults": [{"at": "gateway", "match": LIVE, "fault": {"kind": "drop_after"}}]})
+        env, code = cli.broker(place(intent="dddddddd-4444-4555-8666-777777777777", extra=["--help"]))
+        self.assertEqual(code, 0)
+        self.assertEqual(sim.rec.fills, [])
+        invokes = [e for e in sim.rec.events if e["type"] == "invoke" and e["f"] == "broker order place"]
+        self.assertFalse(invokes[-1]["value"]["live"])
+        # the drop meant for the first live order is still armed
+        env, code = cli.broker(place(intent="dddddddd-4444-4555-8666-888888888888"))
+        self.assertEqual(code, 2)
+        self.assertEqual(len(sim.rec.fills), 1)
+
     def test_settle_commits_a_late_order_the_client_never_waited_for(self):
         # V3: lookup finds nothing, the same intent is resent and fills; the
         # first attempt still commits once the run is settled.
