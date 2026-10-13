@@ -180,7 +180,7 @@ def alpaca_bars(symbols, timeframe, start, end, feed):
     out = {s: [] for s in symbols}
     params = {"symbols": ",".join(symbols), "timeframe": timeframe,
               "start": start + "T00:00:00Z", "end": end + "T23:59:59Z",
-              "adjustment": "raw", "feed": feed, "limit": "10000",
+              "adjustment": "split", "feed": feed, "limit": "10000",
               "sort": "asc"}
     first_url = None
     while True:

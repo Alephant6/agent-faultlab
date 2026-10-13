@@ -28,6 +28,10 @@ export APCA_API_KEY_ID=... APCA_API_SECRET_KEY=...
 python3 -I fetch_market_data.py --out data --only alpaca
 ```
 
+Alpaca bars are split-adjusted. NVDA's 10-for-1 split took effect on
+2024-06-10, inside the daily window, so raw bars would start with a week of
+prices about ten times the rest.
+
 Output: `data/<source>/<SYMBOL>/{1m,1d,funding_8h}.csv` with columns
 `ts_ms,ts_utc,open,high,low,close,volume,trades,vwap` (UTC, milliseconds;
 Binance's 2025 files use microseconds and are converted). `data/manifest.json`
