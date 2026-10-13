@@ -223,9 +223,26 @@ class Broker:
     def tick(self) -> None:
         """One unit of simulated progress; called once per handled request."""
         self.calls += 1
-        now = self.clock.now_ms()
         due = [p for p in self.pending if p["due_call"] <= self.calls]
         self.pending = [p for p in self.pending if p["due_call"] > self.calls]
+        self._commit_late(due)
+        now = self.clock.now_ms()
+        for v in self.venues.values():
+            v.on_tick(now)
+
+    def settle(self) -> int:
+        """Commit every late venue commit that is still pending. The venue does
+        not wait for the client to send more requests, so a run is checked
+        after this. Returns how many were committed."""
+        due, self.pending = self.pending, []
+        self._commit_late(due)
+        now = self.clock.now_ms()
+        for v in self.venues.values():
+            v.on_tick(now)
+        return len(due)
+
+    def _commit_late(self, due: list[dict]) -> None:
+        now = self.clock.now_ms()
         for p in due:
             v = self.venues[p["venue"]]
             res = v.submit(p["req"], now, intent=p["intent_id"])
@@ -237,8 +254,6 @@ class Broker:
                 self._finish(rec, res, env, code)
             if res.kind == "new":
                 self._count_daily(rec.account if rec else p["req"]["account"], res.order)
-        for v in self.venues.values():
-            v.on_tick(now)
 
     # ================================================================ entry
 

@@ -4,7 +4,7 @@
 #
 #   ALVA_BIN=/path/to/real/alva bash runner/run_on_server.sh check   # data, unit tests, scripted batch, one Claude run
 #   ALVA_BIN=/path/to/real/alva bash runner/run_on_server.sh batch   # 7 tasks x 5 runs, 3 at a time
-#   bash runner/run_on_server.sh pack                                # report.md and a tarball for analysis
+#   bash runner/run_on_server.sh pack                                # report.md, digest.md and a tarball
 #
 # ALVA_BIN must be the CLI itself, not a wrapper that pins ALVA_ENDPOINT:
 # every episode runs its own server on a free port. Optional: OUT, K, JOBS,
@@ -37,7 +37,7 @@ case "${1:-}" in
   pack)
     python3 runner/faultlab_run.py report "$OUT" >/dev/null
     tar czf "$OUT.tgz" --exclude='*/workspace/.claude' --exclude='*/xdg' "$OUT"
-    ls -la "$OUT.tgz" "$OUT/report.md"
+    ls -la "$OUT.tgz" "$OUT/report.md" "$OUT/digest.md"
     ;;
   *)
     echo "usage: $0 check|batch|pack" >&2

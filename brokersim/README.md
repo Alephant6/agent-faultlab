@@ -23,7 +23,7 @@ and is meant for `alva-ai/skills` v1.23.0. Python 3.10+, standard library only.
 ```bash
 cd brokersim
 python3 -m brokersim fetch-data          # 24 pinned Binance kline files (~0.9 MB), SHA-256 checked
-python3 -m brokersim selftest            # checker self-test + 65 unit tests
+python3 -m brokersim selftest            # checker self-test + 66 unit tests
 python3 -m brokersim serve --scenario scenarios/v2-drop-after-fill.json --out runs/v2
 ```
 
@@ -198,7 +198,9 @@ means any of. `times: 0` fires on every match from the nth on.
 Agents should not be able to tell they are in a simulator, so responses avoid
 words like mock, test or sim (a unit test checks this), and the control
 endpoints under `/__sim/` answer 404 unless the request carries the token
-printed at start-up.
+printed at start-up. `POST /__sim/settle` commits every late venue commit
+still pending, since a real venue does not wait for the client's next
+request; the runner calls it before checking a run.
 
 ## What the checker reports
 

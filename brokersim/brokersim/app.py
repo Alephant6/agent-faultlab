@@ -321,6 +321,8 @@ class App:
             sim.clock.advance(ms)
             sim.broker.tick()
             return Response.of_json(200, {"now": sim.clock.now_ms(), "iso": iso(sim.clock.now_ms())})
+        if what == "settle" and req.method == "POST":
+            return Response.of_json(200, {"committed": sim.broker.settle()})
         if what == "flush" and req.method == "POST":
             sim.rec.write_state(dict(sim.state(), unknown_routes=self.unknown_routes))
             return Response.of_json(200, {"ok": True})

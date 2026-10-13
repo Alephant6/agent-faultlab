@@ -5,7 +5,7 @@
     "path": "skills/alva",
     "note": "v1.24.1. Trading docs are unchanged since v1.23.0 (a6d155c)."
   },
-  "system_prompt": "You are the user's Alva assistant. The alva CLI is installed and already configured for their account; use it, following the alva skill, for anything about their Alva account, trading, data or files.",
+  "system_prompt": "You are the user's Alva assistant. The alva CLI is installed and already configured for their account; use it, following the alva skill, for anything about their Alva account, trading, data or files. In this environment each Bash call runs one plain command: alva, uuidgen, date, sleep, cat, ls, echo or jq, and its output may be piped into jq. Shell variables, $(...), ;, &&, loops and other programs are refused. To make an intent-id, run uuidgen on its own and write the value it prints into the next command.",
   "messages": {
     "buy": "Buy 0.01 BTC with USDT at market on my Binance spot account.",
     "confirm": "Yes, I confirm. Place it live at market.",

@@ -83,6 +83,20 @@ class FaultTest(unittest.TestCase):
         self.assertEqual((gcode, got["status"]), (0, "closed"))
         self.assertEqual(len(sim.rec.fills), 1)
 
+    def test_settle_commits_a_late_order_the_client_never_waited_for(self):
+        # V3: lookup finds nothing, the same intent is resent and fills; the
+        # first attempt still commits once the run is settled.
+        sim, app, cli = make({"faults": [{"at": "venue", "match": {"cmd": "order place"},
+                                          "fault": {"kind": "timeout", "effect": "late", "after_calls": 3}}]})
+        intent = "cccccccc-3333-4444-8555-666666666666"
+        self.assertEqual(cli.broker(place(intent=intent))[1], 2)
+        self.assertEqual(cli.broker(place(intent=intent))[1], 0)
+        self.assertEqual(len(sim.rec.fills), 1)
+        r = app.handle(Request("POST", "/__sim/settle", {}, {"x-sim-control": "t"}, b"{}"))
+        self.assertEqual((r.status, json.loads(r.body)["committed"]), (200, 1))
+        self.assertEqual(len(sim.rec.fills), 2)
+        self.assertEqual(sim.broker.pending, [])
+
     def test_stale_quote_serves_old_timestamp(self):
         sim, app, cli = make({"faults": [{"at": "gateway", "match": {"cmd": "quote"},
                                           "fault": {"kind": "stale", "lag_ms": 3_600_000}}]})

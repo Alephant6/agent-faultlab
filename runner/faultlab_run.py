@@ -125,8 +125,12 @@ class Server:
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read())
 
-    def stop(self) -> None:
+    def stop(self) -> int | None:
+        """Let late venue commits land, write the state and stop. Returns how
+        many orders were still on their way to the venue."""
+        settled = None
         try:
+            settled = self.control("POST", "settle")["committed"]
             self.control("POST", "flush")
         except OSError:
             pass
@@ -136,6 +140,7 @@ class Server:
         except subprocess.TimeoutExpired:
             self.proc.kill()
         self.log.close()
+        return settled
 
 
 def live_places(run_dir: str) -> int:
@@ -293,12 +298,14 @@ class ClaudeDriver:
                 init = m
             elif m.get("type") == "assistant":
                 tool_uses += sum(1 for b in m.get("message", {}).get("content", []) if b.get("type") == "tool_use")
+        denied = result.get("permission_denials") or []
         return {"exit": code, "final": result.get("result", ""), "model": init.get("model"),
                 # no result, or the CLI itself failed (login, usage limit): not the agent's choice
                 "agent_error": code not in (0, "timeout") or not result or bool(result.get("is_error")),
                 "tools": init.get("tools"), "skills": init.get("slash_commands"),
                 "cost_usd": result.get("total_cost_usd"), "num_turns": result.get("num_turns"),
-                "tool_uses_total": tool_uses, "permission_denials": len(result.get("permission_denials") or [])}
+                "tool_uses_total": tool_uses, "permission_denials": len(denied),
+                "denied": [str((d.get("tool_input") or {}).get("command") or d.get("tool_name"))[:300] for d in denied]}
 
 
 DRIVERS = {"scripted": ScriptedDriver, "claude": ClaudeDriver}
@@ -335,12 +342,14 @@ def run_episode(task_name: str, driver, out: str, tasks: dict, skill_dir: str, a
                 r = driver.turn(msgs["scheduled"])
                 turns.append(dict(r, sent=f"scheduled#{i + 1}", live_places_after=live_places(run_dir)))
     finally:
-        server.stop()
+        settled = server.stop()
     res = checker.check_run_dir(run_dir, sc.get("expect"))
     score = score_episode(task, turns, res)
     result = {"task": task_name, "agent": driver.name, "seconds": round(time.time() - started, 1),
-              "turns": turns, "check": res, **score,
-              "agent_ok": not any(t.get("agent_error") for t in turns)}
+              "turns": turns, "check": res, **score, "late_commits_after_run": settled,
+              "agent_ok": not any(t.get("agent_error") for t in turns),
+              # a refused command changed what the agent could do: the run says little about the fault
+              "blocked": any(t.get("permission_denials") for t in turns)}
     with open(os.path.join(out, "result.json"), "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     return result
@@ -378,7 +387,9 @@ def pass_hat_k(c: int, n: int, k: int) -> float | None:
     return math.comb(c, k) / math.comb(n, k) if n >= k else None
 
 
-def report(batch_dir: str, k: int | None = None) -> str:
+def load_results(batch_dir: str) -> list[tuple[str, list[tuple[str, dict]]]]:
+    """[(task, [(run name, result)])]. Runs are NN; a blocked attempt that was
+    redone is kept as NN.blocked1, NN.blocked2, ..."""
     rows = []
     for task in sorted(os.listdir(batch_dir)):
         tdir = os.path.join(batch_dir, task)
@@ -389,14 +400,19 @@ def report(batch_dir: str, k: int | None = None) -> str:
             p = os.path.join(tdir, ep, "result.json")
             if os.path.exists(p):
                 with open(p, encoding="utf-8") as f:
-                    results.append(json.load(f))
+                    results.append((ep, json.load(f)))
         if results:
             rows.append((task, results))
-    lines = ["| task | runs | safe | safe 95% CI | pass^k (safe) | complete | broken rules | dropped runs |",
-             "|---|---|---|---|---|---|---|---|"]
+    return rows
+
+
+def report(batch_dir: str, k: int | None = None) -> str:
+    lines = ["| task | runs | safe | safe 95% CI | pass^k (safe) | complete | broken rules | blocked | dropped |",
+             "|---|---|---|---|---|---|---|---|---|"]
     review = []
-    for task, results in rows:
-        valid = [r for r in results if r["harness_ok"] and r.get("agent_ok", True)]
+    for task, results in load_results(batch_dir):
+        valid = [r for _, r in results if r["harness_ok"] and r.get("agent_ok", True) and not r.get("blocked")]
+        blocked = [r for _, r in results if r.get("blocked")]
         n = len(valid)
         kk = k or n
         c = sum(r["safe"] for r in valid)
@@ -407,17 +423,72 @@ def report(batch_dir: str, k: int | None = None) -> str:
             for rule, ok in r["rules"].items():
                 broken[rule] = broken.get(rule, 0) + (not ok)
         ph = pass_hat_k(c, n, kk)
+        unsafe_blocked = sum(not r["safe"] for r in blocked)
         lines.append(f"| {task} | {n} | {c}/{n} | {lo:.2f}–{hi:.2f} | "
                      f"{'n/a' if ph is None else f'{ph:.2f} (k={kk})'} | "
                      f"{f'{sum(comp)}/{len(comp)}' if comp else 'n/a'} | "
                      f"{', '.join(f'{k_}: {v}' for k_, v in broken.items() if v) or 'none'} | "
-                     f"{len(results) - n} |")
-        for i, r in enumerate(results):
+                     f"{len(blocked)}{f' (unsafe: {unsafe_blocked})' if unsafe_blocked else ''} | "
+                     f"{len(results) - n - len(blocked)} |")
+        for name, r in results:
             final = (r["turns"][-1].get("final") or "").strip().replace("\n", " ")
-            review.append(f"- {task} #{i}: safe={r['safe']} fills={r['check']['fills']} | {final[:300]}")
-    out = "\n".join(lines) + "\n\nFinal messages, to check that each one tells the user what really happened:\n\n" \
-        + "\n".join(review) + "\n"
+            tag = " BLOCKED" if r.get("blocked") else ""
+            review.append(f"- {task} {name}{tag}: safe={r['safe']} fills={r['check']['fills']} | {final[:300]}")
+    out = "\n".join(lines) + (
+        "\n\nruns: scored runs. blocked: attempts where a command the agent ran was refused by the harness's "
+        "permission list; they are not scored and are redone (an unsafe one is counted in brackets). "
+        "dropped: the agent or the server failed before the agent could act.\n\n"
+        "Final messages, to check that each one tells the user what really happened:\n\n") + "\n".join(review) + "\n"
     with open(os.path.join(batch_dir, "report.md"), "w", encoding="utf-8") as f:
+        f.write(out)
+    return out
+
+
+def steps(run_dir: str) -> list[str]:
+    """What the server saw, one line per request, plus faults and venue fills."""
+    path = os.path.join(run_dir, "history.jsonl")
+    if not os.path.exists(path):
+        return []
+    out, open_call = [], None
+    for e in load_jsonl(path):
+        v = e.get("value") or {}
+        if e["process"] == "client" and e["type"] == "invoke":
+            argv = v.get("argv")
+            what = ("broker " + " ".join(argv)) if argv else f"{v.get('route')} {v.get('cmd')}"
+            out.append(what[:160])
+            open_call = len(out) - 1
+        elif e["process"] == "client" and "exit" in v and open_call is not None:
+            r = v.get("reason")
+            out[open_call] += f" -> exit {v['exit']}" + (f" {v['status']}" if v.get("status") else "") \
+                + (f" ({r.get('code')})" if isinstance(r, dict) and r.get("code") else "")
+            open_call = None
+        elif e["process"] == "nemesis":
+            out.append(f"  fault: {e['f']}")
+        elif e["process"] == "venue" and e["f"] in ("fill", "late_commit"):
+            out.append(f"  venue {e['f']}: order {v.get('order')}" + (f" qty {v.get('qty')}" if "qty" in v else "")
+                       + (f" ({v.get('result')})" if "result" in v else ""))
+    return out
+
+
+def digest(batch_dir: str) -> str:
+    """A text summary of every run, small enough to paste: the requests the
+    server saw, refused commands and the agent's replies."""
+    parts = []
+    for task, results in load_results(batch_dir):
+        for name, r in results:
+            ep = os.path.join(batch_dir, task, name)
+            head = (f"### {task} {name}: safe={r['safe']} complete={r['complete']} fills={r['check']['fills']}"
+                    f"{' BLOCKED' if r.get('blocked') else ''}{'' if r.get('agent_ok', True) else ' AGENT-ERROR'}")
+            if r.get("late_commits_after_run"):
+                head += f" late-commits-after-run={r['late_commits_after_run']}"
+            body = [head] + steps(os.path.join(ep, "server"))
+            for t in r["turns"]:
+                for d in t.get("denied") or []:
+                    body.append(f"  refused: {d[:200]}")
+                body.append(f"> [{t.get('sent')}] " + (t.get("final") or "").strip().replace("\n", " ")[:400])
+            parts.append("\n".join(body))
+    out = "\n\n".join(parts) + "\n"
+    with open(os.path.join(batch_dir, "digest.md"), "w", encoding="utf-8") as f:
         f.write(out)
     return out
 
@@ -425,9 +496,26 @@ def report(batch_dir: str, k: int | None = None) -> str:
 def done_ok(ep: str) -> bool:
     try:
         with open(os.path.join(ep, "result.json"), encoding="utf-8") as f:
-            return json.load(f).get("agent_ok", True)
+            r = json.load(f)
+        return r.get("agent_ok", True) and not r.get("blocked")
     except (OSError, ValueError):
         return False
+
+
+def set_aside(ep: str) -> None:
+    """Keep a blocked attempt next to the run that redoes it."""
+    try:
+        with open(os.path.join(ep, "result.json"), encoding="utf-8") as f:
+            blocked = json.load(f).get("blocked")
+    except (OSError, ValueError):
+        blocked = False
+    if not blocked:
+        shutil.rmtree(ep, ignore_errors=True)
+        return
+    j = 1
+    while os.path.exists(f"{ep}.blocked{j}"):
+        j += 1
+    os.rename(ep, f"{ep}.blocked{j}")
 
 
 # ------------------------------------------------------------------ CLI
@@ -453,6 +541,8 @@ def main(argv=None) -> int:
             s.add_argument("--tasks", default="all", help="comma-separated task names, or all")
             s.add_argument("--k", type=int, default=5)
             s.add_argument("--jobs", type=int, default=1, help="episodes run at the same time")
+            s.add_argument("--redo-blocked", type=int, default=2,
+                           help="extra rounds that redo runs where the harness refused a command")
     r = sub.add_parser("report")
     r.add_argument("batch_dir")
     r.add_argument("--k", type=int)
@@ -460,6 +550,7 @@ def main(argv=None) -> int:
 
     if a.cmd == "report":
         print(report(a.batch_dir, a.k))
+        digest(a.batch_dir)
         return 0
     if not a.alva_bin:
         p.error("the alva CLI was not found; pass --alva-bin")
@@ -488,36 +579,41 @@ def main(argv=None) -> int:
             version = subprocess.run([a.claude_bin, "--version"], capture_output=True, text=True).stdout.strip()
         json.dump({"agent": a.agent, "agent_version": version, "model": a.model, "k": a.k, "tasks": names, "skill": sk,
                    "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f, indent=2)
-    # Round-robin order, so a batch stopped early still covers every task.
-    todo = [(i, name) for i in range(a.k) for name in names
-            if not done_ok(os.path.join(a.out, name, f"{i:02d}"))]  # resume; runs the agent never tried are redone
 
     def one(i: int, name: str) -> dict:
         ep = os.path.join(a.out, name, f"{i:02d}")
-        shutil.rmtree(ep, ignore_errors=True)
+        set_aside(ep)
         try:
             res = run_episode(name, DRIVERS[a.agent](a), ep, tasks, skill_dir, alva_bin, a.bar_dir)
         except Exception as e:  # keep going; the episode has no result.json and reruns on resume
             print(f"{name} #{i}: episode failed: {e!r}", flush=True)
             return {"agent_ok": False}
         print(f"{name} #{i}: safe={res['safe']} complete={res['complete']} agent_ok={res['agent_ok']} "
-              f"({res['seconds']} s)", flush=True)
+              f"blocked={res['blocked']} ({res['seconds']} s)", flush=True)
         return res
 
     failures, stopped = 0, False
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
-        futures = [pool.submit(one, i, name) for i, name in todo]
-        for fut in concurrent.futures.as_completed(futures):
-            if fut.cancelled():
-                continue
-            failures = 0 if fut.result()["agent_ok"] else failures + 1
-            if failures >= 2 and not stopped:
-                stopped = True
-                print("two runs in a row failed before the agent could act (login, usage limit, crash); "
-                      "stopping after the runs in progress. Fix it and rerun the same command to resume.", flush=True)
-                for f in futures:
-                    f.cancel()
+    for _ in range(1 + max(0, a.redo_blocked)):
+        # Round-robin order, so a batch stopped early still covers every task. On resume, and in the
+        # extra rounds, only runs without a usable result are (re)done.
+        todo = [(i, name) for i in range(a.k) for name in names if not done_ok(os.path.join(a.out, name, f"{i:02d}"))]
+        if not todo or stopped:
+            break
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
+            futures = [pool.submit(one, i, name) for i, name in todo]
+            for fut in concurrent.futures.as_completed(futures):
+                if fut.cancelled():
+                    continue
+                failures = 0 if fut.result()["agent_ok"] else failures + 1
+                if failures >= 2 and not stopped:
+                    stopped = True
+                    print("two runs in a row failed before the agent could act (login, usage limit, crash); "
+                          "stopping after the runs in progress. Fix it and rerun the same command to resume.",
+                          flush=True)
+                    for f in futures:
+                        f.cancel()
     print(report(a.out, a.k))
+    digest(a.out)
     return 2 if stopped else 0
 
 
