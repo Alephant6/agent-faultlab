@@ -463,6 +463,10 @@ def main(argv=None) -> int:
         return 0
     if not a.alva_bin:
         p.error("the alva CLI was not found; pass --alva-bin")
+    # brokersim and the agent each run in their own directory, so a relative path would point elsewhere.
+    a.out, a.skill_cache = os.path.abspath(a.out), os.path.abspath(a.skill_cache)
+    if a.bar_dir:
+        a.bar_dir = os.path.abspath(a.bar_dir)
     tasks = load_tasks()
     sk = tasks["skill"]
     if a.skill_dir:
