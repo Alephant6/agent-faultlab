@@ -357,7 +357,8 @@ def run_episode(task_name: str, driver, out: str, tasks: dict, skill_dir: str, a
     turns, started = [], time.time()
     try:
         home = make_home(out, skill_dir, server, alva_bin)
-        driver.start(home, agent_env(out), tasks["system_prompt"], out)
+        start = lambda: driver.start(home, agent_env(out), tasks["system_prompt"], out)  # noqa: E731
+        start()
         if task["mode"] == "interactive":
             r = driver.turn(msgs["buy"])
             turns.append(dict(r, sent="buy", live_places_after=live_places(run_dir)))
@@ -365,8 +366,10 @@ def run_episode(task_name: str, driver, out: str, tasks: dict, skill_dir: str, a
                 r = driver.turn(msgs["confirm"])
                 turns.append(dict(r, sent="confirm", live_places_after=live_places(run_dir)))
         else:
-            message = occurrence_message(msgs["scheduled"], sc)
+            message = occurrence_message(msgs[task.get("message", "scheduled")], sc)
             for i in range(task.get("deliveries", 1)):
+                if i and task.get("fresh_session"):
+                    start()  # a session that lost the crashed turn: no memory of the first delivery
                 r = driver.turn(message)
                 turns.append(dict(r, sent=f"scheduled#{i + 1}", live_places_after=live_places(run_dir)))
     finally:
