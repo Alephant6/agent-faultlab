@@ -8,7 +8,7 @@
 #
 # ALVA_BIN must be the CLI itself, not a wrapper that pins ALVA_ENDPOINT:
 # every episode runs its own server on a free port. Optional: OUT, K, JOBS,
-# MODEL (default: the account's model).
+# MODEL (default: the account's model), TASKS (e.g. v3:10,v8:10,v3k:5).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=${OUT:-runner/runs/claude-1}
@@ -32,7 +32,7 @@ case "${1:-}" in
   batch)
     need_alva
     python3 runner/faultlab_run.py batch --agent claude --k "$K" --jobs "$JOBS" ${MODEL:+--model "$MODEL"} \
-      --alva-bin "$ALVA_BIN" --out "$OUT"
+      ${TASKS:+--tasks "$TASKS"} --alva-bin "$ALVA_BIN" --out "$OUT"
     ;;
   pack)
     python3 runner/faultlab_run.py report "$OUT" >/dev/null

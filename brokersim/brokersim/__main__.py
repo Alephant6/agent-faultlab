@@ -62,6 +62,9 @@ def _archive_previous_run(out: str) -> None:
 
 def cmd_serve(a) -> int:
     sc = load_scenario(a.scenario) if a.scenario else load_scenario({})
+    if a.move_to:
+        when = time.strftime("%Y-%m-%dT%H:%M:00Z", time.gmtime()) if a.move_to == "now" else a.move_to
+        sc["clock"]["move_to"] = when
     if a.out:
         os.makedirs(a.out, exist_ok=True)
         _archive_previous_run(a.out)
@@ -142,6 +145,8 @@ def main(argv=None) -> int:
     s.add_argument("--out", help="directory for history.jsonl, ledger.jsonl, requests.jsonl, state.json")
     s.add_argument("--control-token")
     s.add_argument("--allow-synthetic", action="store_true", help="use made-up prices if the cache is missing")
+    s.add_argument("--move-to", metavar="now|ISO-8601",
+                   help="move the replay, its files and schedules to this time (sets clock.move_to)")
     s.add_argument("--verbose", action="store_true")
     s.set_defaults(fn=cmd_serve)
 

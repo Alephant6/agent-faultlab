@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from urllib.parse import parse_qs
 
 from .alfs import FsError
+from .schedules import GraphQLError
 from .util import iso
 
 CONTROL_PREFIX = "/__sim/"
@@ -188,6 +189,10 @@ class App:
             return {"route": "trading-pairs", "cmd": "search", "f": "trading-pairs search"}
         if p in ("/api/v1/arrays-jwt/status", "/api/v1/arrays-jwt/ensure"):
             return {"route": "arrays-jwt", "cmd": p.rsplit("/", 1)[-1], "f": "arrays-jwt"}
+        if p == "/query" and req.method == "POST":
+            m = re.match(r"^\s*(?:query|mutation)\s+(\w+)", str(req.json().get("query") or ""))
+            name = m.group(1) if m else "anonymous"
+            return {"route": "graphql", "cmd": name, "f": f"graphql {name}"}
         return {"route": "other", "cmd": p, "f": f"{req.method} {p}"}
 
     # ------------------------------------------------------------ routes
@@ -208,6 +213,8 @@ class App:
                 return self._trading(req, op)
             if route == "fs":
                 return self._fs(req, op, corrupt=(kind == "corrupt"))
+            if route == "graphql":
+                return self._graphql(req)
         except (ValueError, TypeError, KeyError, AttributeError) as e:
             return api_error(400, "INVALID_ARGUMENT", f"bad request: {e}"), 1, {"http": 400}
         if route == "me":
@@ -230,6 +237,16 @@ class App:
             return Response.of_json(200, {"exists": True, "expires_at": exp_s, "tier": tier,
                                           "renewal_needed": False}), 0, {}
         return api_error(404, "NOT_FOUND", f"{req.path} not found"), 1, {"http": 404}
+
+    def _graphql(self, req: Request) -> tuple[Response, int, dict]:
+        """GraphQL answers HTTP 200; errors travel in the body with a code
+        the toolkit maps to an HTTP-like status."""
+        try:
+            _, data = self.sim.schedules.execute(req.json())
+        except GraphQLError as e:
+            return Response.of_json(200, {"errors": [{"message": str(e), "extensions": {"code": e.code}}],
+                                          "data": None}), 1, {"code": e.code}
+        return Response.of_json(200, {"data": data}), 0, {}
 
     def _trading(self, req: Request, op: dict) -> tuple[Response, int, dict]:
         b = self.sim.broker
@@ -316,6 +333,10 @@ class App:
             return Response.of_json(200, dict(sim.state(), unknown_routes=self.unknown_routes))
         if what == "history":
             return Response.of_json(200, {"events": sim.rec.events, "fills": sim.rec.fills})
+        if what in ("advance", "settle") and req.method == "POST":
+            # these change the run, so a replay has to repeat them
+            sim.rec.request({"method": "POST", "path": req.path, "control": True,
+                             "body": req.body.decode("utf-8", "replace")})
         if what == "advance" and req.method == "POST":
             ms = int(req.json().get("ms", 0))
             sim.clock.advance(ms)

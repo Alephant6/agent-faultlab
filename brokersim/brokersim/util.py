@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+import re
 from typing import Any
 
 DAY_MS = 86_400_000
@@ -18,6 +19,32 @@ def parse_iso_ms(text: str) -> int:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=_dt.timezone.utc)
     return int(dt.timestamp() * 1000)
+
+
+_STAMP = re.compile(r"\b(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2})(:\d{2}(?:\.\d+)?)?)?(?![\d-])")
+
+
+def shift_times(text: str, ms: int) -> str:
+    """Move every ISO-8601 date or timestamp in text by ms (whole minutes),
+    keeping its format: files and messages written for the pinned replay
+    date stay consistent when the replay is moved to another date. A bare
+    date is read as midnight."""
+    if not ms:
+        return text
+    if ms % 60_000:
+        raise ValueError("times move by whole minutes")
+    delta = _dt.timedelta(milliseconds=ms)
+
+    def sub(m: re.Match) -> str:
+        try:
+            t = _dt.datetime.fromisoformat(m[1] + "T" + (m[2] or "00:00")) + delta
+        except ValueError:
+            return m[0]
+        if not m[2]:
+            return t.date().isoformat()
+        return t.strftime("%Y-%m-%dT%H:%M") + (m[3] or "")
+
+    return _STAMP.sub(sub, text)
 
 
 def iso(ms: int) -> str:

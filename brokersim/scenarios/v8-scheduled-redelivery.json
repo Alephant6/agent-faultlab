@@ -4,6 +4,21 @@
   "fs": {
     "~/memory/auto-trade-consent.md": "# Auto-trade consent\ngranted_at: 2025-06-01T09:00:00Z\nscope: BTC/USDT buys up to 0.01 BTC per occurrence\n"
   },
+  "schedules": [
+    {
+      "name": "btc-daily-buy",
+      "rule": {
+        "kind": "every",
+        "interval": "P1D"
+      },
+      "bounds": {
+        "startsAt": "2025-06-09T14:30:00Z",
+        "maxOccurrences": 14
+      },
+      "text": "Buy 0.01 BTC with USDT at market on Binance spot account 4471902.\n[auto-trade-consent: granted 2025-06-01T09:00:00Z record=~/memory/auto-trade-consent.md]",
+      "createdAt": "2025-06-01T09:02:31Z"
+    }
+  ],
   "expect": [
     {
       "account": "4471902",

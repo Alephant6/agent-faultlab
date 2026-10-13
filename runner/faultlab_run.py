@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import hashlib
 import io
 import json
 import math
@@ -40,7 +41,8 @@ sys.path.insert(0, BROKERSIM)
 
 from brokersim import checker  # noqa: E402
 from brokersim.history import load_jsonl  # noqa: E402
-from brokersim.sim import load_scenario, merge  # noqa: E402
+from brokersim.sim import load_scenario, merge, move_scenario  # noqa: E402
+from brokersim.util import parse_iso_ms  # noqa: E402
 
 API_KEY = "alva_local_dev_key_0000000000"
 TURN_TIMEOUT_S = 20 * 60  # longer than v5's 10-minute hang
@@ -313,15 +315,40 @@ DRIVERS = {"scripted": ScriptedDriver, "claude": ClaudeDriver}
 
 # ------------------------------------------------------------------ one episode
 
+CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def ulid(ms: int, seed: str) -> str:
+    """A ULID for time ms whose random part is fixed by seed."""
+    n = (ms << 80) | int(hashlib.sha256(seed.encode()).hexdigest()[:20], 16)
+    return "".join(CROCKFORD[(n >> (5 * i)) & 31] for i in reversed(range(26)))
+
+
+def occurrence_message(template: str, sc: dict) -> str:
+    """The scheduler's message for the occurrence firing at the scenario's
+    start, from its first schedule (after any move_to)."""
+    moved, _ = move_scenario(sc)
+    if not moved.get("schedules"):
+        raise ValueError(f"scenario {sc.get('name')!r} has no schedule to deliver")
+    s = moved["schedules"][0]
+    start = moved["clock"]["start"]
+    at = start[:19] + "Z"
+    return template.format(schedule=s["name"], occurrence=at, text=s["text"],
+                           message_id="msg_" + ulid(parse_iso_ms(start), f"{s['name']}:{at}"))
+
 
 def run_episode(task_name: str, driver, out: str, tasks: dict, skill_dir: str, alva_bin: str,
-                bar_dir: str | None = None) -> dict:
+                bar_dir: str | None = None, clock: str = "today") -> dict:
     task = tasks["tasks"][task_name]
     msgs = tasks["messages"]
     os.makedirs(out)
     sc = load_scenario(os.path.join(BROKERSIM, "scenarios", task["scenario"]))
     if bar_dir:
         sc = merge(sc, {"data": {"manifest": None, "bar_dir": bar_dir}})
+    if clock == "today":
+        # The agent sees today's date (its system prompt, `date`); a replay
+        # dated the pinned day reads as a stale or misdelivered message.
+        sc = merge(sc, {"clock": {"move_to": time.strftime("%Y-%m-%dT%H:%M:00Z", time.gmtime())}})
     sc_path = os.path.join(out, "scenario.json")
     with open(sc_path, "w", encoding="utf-8") as f:
         json.dump(sc, f, indent=2)
@@ -338,8 +365,9 @@ def run_episode(task_name: str, driver, out: str, tasks: dict, skill_dir: str, a
                 r = driver.turn(msgs["confirm"])
                 turns.append(dict(r, sent="confirm", live_places_after=live_places(run_dir)))
         else:
+            message = occurrence_message(msgs["scheduled"], sc)
             for i in range(task.get("deliveries", 1)):
-                r = driver.turn(msgs["scheduled"])
+                r = driver.turn(message)
                 turns.append(dict(r, sent=f"scheduled#{i + 1}", live_places_after=live_places(run_dir)))
     finally:
         settled = server.stop()
@@ -535,12 +563,16 @@ def main(argv=None) -> int:
         s.add_argument("--claude-bin", default="claude")
         s.add_argument("--cli-timeout", type=int, default=120, help="scripted driver: seconds before a CLI call is killed")
         s.add_argument("--bar-dir", help="use market-data output instead of the pinned Binance files")
+        s.add_argument("--clock", choices=("today", "pinned"), default="today",
+                       help="today: move the replay to the current date and time (crypto only: stock sessions "
+                            "would land on other weekdays); pinned: the scenario's own date")
         s.add_argument("--skill-cache", default=os.path.join(HERE, ".cache"))
         s.add_argument("--skill-dir", help="a local copy of the skill folder at the pinned commit, instead of downloading")
         if name == "episode":
             s.add_argument("--task", required=True)
         else:
-            s.add_argument("--tasks", default="all", help="comma-separated task names, or all")
+            s.add_argument("--tasks", default="all",
+                           help="comma-separated task names, or all; name:N runs that task N times instead of --k")
             s.add_argument("--k", type=int, default=5)
             s.add_argument("--jobs", type=int, default=1, help="episodes run at the same time")
             s.add_argument("--redo-blocked", type=int, default=2,
@@ -570,23 +602,30 @@ def main(argv=None) -> int:
         skill_dir = fetch_skill(a.skill_cache, sk["repo"], sk["commit"], sk["path"])
     alva_bin = os.path.abspath(a.alva_bin)
     if a.cmd == "episode":
-        res = run_episode(a.task, DRIVERS[a.agent](a), a.out, tasks, skill_dir, alva_bin, a.bar_dir)
+        res = run_episode(a.task, DRIVERS[a.agent](a), a.out, tasks, skill_dir, alva_bin, a.bar_dir, a.clock)
         print(json.dumps({k: res[k] for k in ("task", "safe", "complete", "rules", "harness_ok")}, indent=2))
         return 0
-    names = list(tasks["tasks"]) if a.tasks == "all" else a.tasks.split(",")
+    runs = {}
+    for item in (list(tasks["tasks"]) if a.tasks == "all" else a.tasks.split(",")):
+        name, _, n = item.strip().partition(":")
+        if name not in tasks["tasks"]:
+            p.error(f"unknown task {name!r}")
+        runs[name] = int(n) if n else a.k
+    names = list(runs)
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "batch.json"), "w", encoding="utf-8") as f:
         version = None
         if a.agent == "claude":
             version = subprocess.run([a.claude_bin, "--version"], capture_output=True, text=True).stdout.strip()
-        json.dump({"agent": a.agent, "agent_version": version, "model": a.model, "k": a.k, "tasks": names, "skill": sk,
+        json.dump({"agent": a.agent, "agent_version": version, "model": a.model, "k": a.k, "tasks": runs, "skill": sk,
+                   "clock": a.clock,
                    "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f, indent=2)
 
     def one(i: int, name: str) -> dict:
         ep = os.path.join(a.out, name, f"{i:02d}")
         set_aside(ep)
         try:
-            res = run_episode(name, DRIVERS[a.agent](a), ep, tasks, skill_dir, alva_bin, a.bar_dir)
+            res = run_episode(name, DRIVERS[a.agent](a), ep, tasks, skill_dir, alva_bin, a.bar_dir, a.clock)
         except Exception as e:  # keep going; the episode has no result.json and reruns on resume
             print(f"{name} #{i}: episode failed: {e!r}", flush=True)
             return {"agent_ok": False}
@@ -598,7 +637,8 @@ def main(argv=None) -> int:
     for _ in range(1 + max(0, a.redo_blocked)):
         # Round-robin order, so a batch stopped early still covers every task. On resume, and in the
         # extra rounds, only runs without a usable result are (re)done.
-        todo = [(i, name) for i in range(a.k) for name in names if not done_ok(os.path.join(a.out, name, f"{i:02d}"))]
+        todo = [(i, name) for i in range(max(runs.values())) for name in names
+                if i < runs[name] and not done_ok(os.path.join(a.out, name, f"{i:02d}"))]
         if not todo or stopped:
             break
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
