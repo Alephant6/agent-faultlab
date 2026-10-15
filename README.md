@@ -29,7 +29,7 @@ Alva's service and contains none of its output.
 ## Status (2026-10-12)
 
 * brokersim v0.1 runs with the unmodified `alva` CLI 0.31.0. Eight scenarios
-  pass through the real CLI, 80 unit tests and the checker self-test pass, and
+  pass through the real CLI, 81 unit tests and the checker self-test pass, and
   recorded runs replay event for event. Every trading command in Alva's skill
   docs was also run through the real CLI against the simulator; the
   differences found are fixed or listed in brokersim's README under "What

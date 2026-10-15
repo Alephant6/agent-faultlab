@@ -109,6 +109,26 @@ class FaultTest(unittest.TestCase):
         self.assertEqual(len(sim.rec.fills), 2)
         self.assertEqual(sim.broker.pending, [])
 
+    def test_replay_after_a_crash_mid_order(self):
+        # A scheduled run crashes while its live order is still in flight at
+        # the venue; the occurrence is replayed into a session that has no
+        # memory of it and finds nothing on the account. Only a replay that
+        # reuses the first attempt's intent-id, with trex tracking that
+        # intent, avoids a second fill.
+        for trex_knows, same_intent, fills in ((False, False, 2), (False, True, 2),
+                                               (True, False, 2), (True, True, 1)):
+            with self.subTest(trex_knows=trex_knows, same_intent=same_intent):
+                sim, app, cli = make({"faults": [{"at": "venue", "match": {"cmd": "order place"},
+                                                  "fault": {"kind": "timeout", "effect": "late", "after_calls": 5,
+                                                            "trex_knows": trex_knows}}]})
+                first = "eeeeeeee-5555-4666-8777-888888888888"
+                self.assertEqual(cli.broker(place(intent=first))[1], 2)
+                listed, _ = cli.broker(["order", "list", "--account", ACCT, "--status", "all"])
+                self.assertEqual(listed, [])
+                cli.broker(place(intent=first if same_intent else "ffffffff-5555-4666-8777-888888888888"))
+                app.handle(Request("POST", "/__sim/settle", {}, {"x-sim-control": "t"}, b"{}"))
+                self.assertEqual(len(sim.rec.fills), fills)
+
     def test_stale_quote_serves_old_timestamp(self):
         sim, app, cli = make({"faults": [{"at": "gateway", "match": {"cmd": "quote"},
                                           "fault": {"kind": "stale", "lag_ms": 3_600_000}}]})
