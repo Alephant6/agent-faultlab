@@ -109,6 +109,9 @@ class GateTest(unittest.TestCase):
         self.assertEqual(listed, [])
         code, body = s.place(B)
         self.assertEqual((code, body["reason"]["code"]), (1, "gate_outcome_unknown"))
+        # the replay must not report that nothing was bought: the first order may still fill
+        self.assertIn("same scheduled occurrence", body["reason"]["message"])
+        self.assertIn("Do not tell the user that nothing was bought", body["reason"]["message"])
         self.assertEqual(s.settle(), 1)
 
     def test_a_crash_before_the_outcome_was_written(self):

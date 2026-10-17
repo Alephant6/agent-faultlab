@@ -651,7 +651,7 @@ def main(argv=None) -> int:
                                 "name+gate runs it with alva-gate in front of the CLI")
             s.add_argument("--k", type=int, default=5)
             s.add_argument("--jobs", type=int, default=1, help="episodes run at the same time")
-            s.add_argument("--redo-blocked", type=int, default=2,
+            s.add_argument("--redo-blocked", type=int, default=4,
                            help="extra rounds that redo runs where the harness refused a command")
     r = sub.add_parser("report")
     r.add_argument("batch_dir")

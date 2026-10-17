@@ -135,12 +135,19 @@ class Gate:
             if e["state"] in ("sent", "unknown"):
                 found = self.resolve(e)
                 if found is None:
+                    same_run = bool(self.occurrence) and e.get("occurrence") == self.occurrence
                     return self.refuse(argv, "gate_outcome_unknown",
                                        f"an earlier live order on this account, symbol and side (intent "
-                                       f"{e['intent']}) has an unknown outcome, and {len(self.pauses)} lookups "
-                                       "found nothing yet. It may still fill, so another order could buy twice. "
-                                       "Tell the user the outcome is unknown; look it up again later with "
-                                       "`alva broker order get --intent-id`.", earlier=e["intent"])
+                                       f"{e['intent']}"
+                                       f"{', sent by this same scheduled occurrence' if same_run else ''}) "
+                                       f"has an unknown outcome, and {len(self.pauses)} lookups found nothing "
+                                       "yet. It may already have filled or may still fill, so another order "
+                                       "could buy twice. "
+                                       f"{'This occurrence may already have bought what it was due to buy. ' if same_run else ''}"
+                                       "Do not tell the user that nothing was bought: tell them that order's "
+                                       "outcome is unknown and may still show up in their balance, and look "
+                                       "it up again later with `alva broker order get --intent-id`.",
+                                       earlier=e["intent"])
                 if e["intent"] == intent:
                     return self.refuse(argv, "gate_already_placed",
                                        f"intent {intent}, whose outcome was unknown, turned out to be placed "
