@@ -74,8 +74,11 @@ python3 gate/test_gate.py   # 10 tests against brokersim in process
 * It never proves that an order with an unknown outcome is absent: a lookup
   that finds nothing is not proof, since the venue may still commit it. Such
   an order blocks further orders on that account, symbol and side until a
-  lookup finds it. The agent is told to report the unknown outcome, so a
-  run can end with the user's order in doubt rather than doubled.
+  lookup finds it. The refusal tells the agent that the earlier order may
+  already have filled and not to report that nothing was bought, so a run
+  can end with the user's order in doubt rather than doubled. (Without
+  that line, agents in the first Claude batch told the user "no BTC was
+  bought" while the earlier order filled a little later.)
 * Outside a schedule it does not judge whether a second order is wanted:
   two orders the user confirmed separately both go through. That decision
   stays with the agent and the user's confirmation.

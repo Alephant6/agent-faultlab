@@ -39,11 +39,19 @@ Alva's service and contains none of its output.
   differences found are fixed or listed in brokersim's README under "What
   this does not do".
 * The runner has run Claude Code with the unmodified skill against these
-  scenarios in five batches since 2026-10-12.
+  scenarios in six batches since 2026-10-12.
 * alva-gate is in place, with 10 tests of its own. A scripted agent that
   follows the skill's docs to the letter double-orders on the late-commit,
   redelivery and crash-replay tasks and is safe on all of them behind the
-  gate. Next: the same comparison with Claude Code.
+  gate.
+* With Claude Code (batch of 2026-10-17): behind the gate, no double fill in
+  20 scored runs of the late-commit, crash-replay, baseline and redelivery
+  tasks, and every run that was meant to fill did. Without the gate the same
+  agent double-filled in some late-commit and crash-replay runs; in the
+  crash-replay ones the second fill landed after the run ended, so the
+  agent's own report said one. Those failures depend on the simulator's
+  guesses about the broker backend, listed in brokersim's README; they are
+  not claims about Alva's service.
 
 ## Quick start
 
