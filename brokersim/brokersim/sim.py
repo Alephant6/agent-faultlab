@@ -13,7 +13,8 @@ from .faults import Nemesis
 from .history import Recorder
 from .marketdata import (MarketData, Series, load_bar_dir, load_local_csv, load_manifest, parse_binance_klines,
                          parse_daily_csv)
-from .util import SimClock, parse_iso_ms
+from .schedules import Schedules
+from .util import DAY_MS, SimClock, iso, parse_iso_ms, shift_times
 from .venue import Market, Venue, semantics_for
 
 PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,7 +41,7 @@ def default_markets(preset: str) -> list[dict]:
 DEFAULT_SCENARIO = {
     "name": "default",
     "clock": {"start": "2025-06-13T14:30:00Z", "step_ms": 1000},
-    "user": {"id": "usr_7c1e9a4f", "username": "demo_trader", "tier": "pro"},
+    "user": {"id": "usr_7c1e9a4f", "username": "demo_trader", "tier": "pro", "channel_id": "418207"},
     "api_key": "alva_local_dev_key_0000000000",
     "data": {"manifest": "data/datasets.json", "cache": "data/cache", "instruments": ["BTCUSDT", "ETHUSDT"]},
     "venues": {"binance": {"preset": "binance"}},
@@ -56,6 +57,7 @@ DEFAULT_SCENARIO = {
     },
     "faults": [],
     "fs": {},
+    "schedules": [],
     "expect": [],
 }
 
@@ -119,6 +121,7 @@ class Sim:
     nemesis: Nemesis
     broker: Broker
     alfs: Alfs
+    schedules: Schedules
 
     @property
     def api_key(self) -> str:
@@ -130,15 +133,40 @@ class Sim:
             "broker": self.broker.state(),
             "faults": self.nemesis.summary(),
             "fs": self.alfs.snapshot(),
+            "schedules": self.schedules.snapshot(),
         }
 
 
+def move_scenario(sc: dict) -> tuple[dict, int]:
+    """Apply clock.move_to: the clock and every date in the scenario's files
+    and schedules move by the same whole number of minutes. Returns the moved
+    scenario and the shift in ms. The input keeps move_to, so a replay of it
+    moves the same way; the output drops it."""
+    sc = copy.deepcopy(sc)
+    target = sc["clock"].pop("move_to", None)
+    if not target:
+        return sc, 0
+    start = sc["clock"]["start"]
+    ms = parse_iso_ms(target) - parse_iso_ms(start)
+    ms -= ms % 60_000
+    sc["clock"]["start"] = iso(parse_iso_ms(start) + ms)
+    sc["clock"]["pinned_start"] = start
+    sc["fs"] = {path: shift_times(text, ms) for path, text in (sc.get("fs") or {}).items()}
+    if sc.get("schedules"):
+        sc["schedules"] = json.loads(shift_times(json.dumps(sc["schedules"]), ms))
+    return sc, ms
+
+
 def build(scenario, out_dir: str | None = None, md: MarketData | None = None) -> Sim:
-    sc = load_scenario(scenario)
+    sc, moved_ms = move_scenario(load_scenario(scenario))
     clock = SimClock(parse_iso_ms(sc["clock"]["start"]), int(sc["clock"].get("step_ms", 1000)))
     rec = Recorder(clock, out_dir)
     if md is None:
         md = load_market_data(sc["data"])
+    if moved_ms:
+        # Prices move by whole days, so daily bars stay on midnight; the rest
+        # of the shift picks another minute of the pinned days.
+        md = md.shifted(moved_ms - moved_ms % DAY_MS)
     nemesis = Nemesis(sc.get("faults"), rec)
     venues = {}
     for name, vc in sc["venues"].items():
@@ -158,6 +186,7 @@ def build(scenario, out_dir: str | None = None, md: MarketData | None = None) ->
     alfs = Alfs(f"/alva/home/{sc['user']['username']}", clock)
     for path, text in (sc.get("fs") or {}).items():
         alfs.write(path, text.encode())
+    schedules = Schedules(clock, sc.get("schedules"), sc["user"].get("channel_id", "418207"))
     rec.event("harness", "info", "start", {"scenario": sc.get("name"), "start": sc["clock"]["start"],
                                            "venues": {n: v.sem.source[:60] for n, v in venues.items()}})
-    return Sim(sc, clock, md, rec, nemesis, broker, alfs)
+    return Sim(sc, clock, md, rec, nemesis, broker, alfs, schedules)

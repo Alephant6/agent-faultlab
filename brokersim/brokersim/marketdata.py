@@ -17,7 +17,7 @@ import json
 import os
 import urllib.request
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable
 
 from .util import DAY_MS
@@ -140,6 +140,15 @@ class MarketData:
 
     def instruments(self) -> list[str]:
         return sorted(self.series)
+
+    def shifted(self, ms: int) -> "MarketData":
+        """A copy with every bar moved by ms: the same prices on other dates."""
+        out = MarketData()
+        for by_iv in self.series.values():
+            for s in by_iv.values():
+                out.add(Series(s.name, s.interval,
+                               [replace(b, open_ms=b.open_ms + ms, close_ms=b.close_ms + ms) for b in s.bars]))
+        return out
 
     def _finest(self, name: str) -> list[Series]:
         by_iv = self.series.get(name, {})

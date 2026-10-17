@@ -17,10 +17,12 @@ from .sim import build
 
 def replay(scenario, requests_path: str, md=None) -> tuple[list[dict], list[dict]]:
     sim = build(scenario, md=md)
-    app = App(sim)
+    app = App(sim, control_token="replay")
     for r in load_jsonl(requests_path):
         headers = {"x-alva-api-key": sim.api_key if r.get("auth") == "ok" else "",
                    "content-type": "application/json"}
+        if r.get("control"):  # advance and settle calls the harness made
+            headers = {"x-sim-control": "replay", "content-type": "application/json"}
         req = Request(r["method"], r["path"], r.get("query") or {}, headers, (r.get("body") or "").encode())
         app.handle(req)
     return sim.rec.events, sim.rec.fills

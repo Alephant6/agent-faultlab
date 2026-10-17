@@ -23,7 +23,7 @@ and is meant for `alva-ai/skills` v1.23.0. Python 3.10+, standard library only.
 ```bash
 cd brokersim
 python3 -m brokersim fetch-data          # 24 pinned Binance kline files (~0.9 MB), SHA-256 checked
-python3 -m brokersim selftest            # checker self-test + 65 unit tests
+python3 -m brokersim selftest            # checker self-test + 81 unit tests
 python3 -m brokersim serve --scenario scenarios/v2-drop-after-fill.json --out runs/v2
 ```
 
@@ -60,7 +60,7 @@ agent (Claude Code / OpenClaw + Alva skill)
   ▼
 gateway ─── nemesis @gateway: drop_before, drop_after, hang, http 401/429/5xx, stale, corrupt
   │  POST /api/v1/broker/invoke {argv, stdin} -> {envelope, exit}
-  │  GET  /api/v1/trading/*, /api/v1/me, /api/v1/fs/*
+  │  GET  /api/v1/trading/*, /api/v1/me, /api/v1/fs/*, POST /query (schedules)
   ▼
 trex model (Alva's broker service): intent-id table, admission gate, retry semantics
   │
@@ -150,17 +150,36 @@ history.jsonl + ledger.jsonl + requests.jsonl  ──>  checker, replay
   the venue setting `closed_market: "reject"` turns that into an exit 1
   `market_closed`. `POST /__sim/advance {"ms": ...}` moves the clock across a
   weekend.
+* **Moving the replay to another date** (`sim.py`). An agent knows today's
+  date from its own system prompt and `date`, so a run pinned to 2025-06-13
+  shows it a scheduled occurrence that is 16 months late. `"clock":
+  {"move_to": "2026-10-13T05:12:00Z"}` (or `serve --move-to now`) moves the
+  clock, every date and time in the scenario's files and schedules, and the
+  price bars by the same amount, in whole minutes. The bars move by whole days
+  only, so daily bars stay on midnight and the rest of the shift picks another
+  minute of the pinned days: prices then depend on the time of day the run
+  starts. The weekday changes too, so stock scenarios should stay pinned.
+* **Agent Schedules** (`schedules.py`). `alva schedule list|put|pause|resume|delete`
+  for the user's Agent Channel, over the GraphQL operations the CLI sends
+  (`ToolkitAgentChannel`, `ToolkitListAgentSchedules`,
+  `ToolkitUpdateAgentSchedule`). A scenario lists schedules in the CLI's own
+  output form (`name`, `rule`, `bounds`, `text`, `createdAt`);
+  `occurrencesUsed`, `nextFireAt` and the status follow from the rule and the
+  clock. Session Inbox schedules and every other GraphQL operation answer
+  `NOT_FOUND`.
 
 ## Determinism
 
-* The clock is logical. It starts at the pinned instant and moves one step
+* The clock is logical. It starts at the pinned instant (or the `move_to`
+  instant, which is saved in the run's `scenario.json`) and moves one step
   (1 s by default) per handled request, so the same request sequence sees the
   same prices and timestamps. Wall-clock time is used only to sleep during a
   `hang` fault.
 * Order ids are sequential; nothing is random unless a scenario asks for it.
 * Faults fire on the nth matching request, never by chance.
 * `requests.jsonl` keeps every request, including the intent-ids the CLI
-  minted. `replay` feeds them to a fresh simulator and compares histories event
+  minted, and the harness's `advance` and `settle` calls. `replay` feeds them
+  to a fresh simulator and compares histories event
   by event, so a counterexample found in an expensive agent run can be studied
   again at no cost. This is the same idea as FoundationDB's deterministic
   simulation, applied to the outside of an agent instead of the inside of a
@@ -177,9 +196,12 @@ orders per day). Starters in `scenarios/`:
 | `baseline.json` | no faults |
 | `v2-drop-after-fill.json` | the first live order fills, then the connection is reset before the reply |
 | `v3-late-commit.json` | the venue times out and commits the order three requests later; trex does not know |
+| `v3k-late-commit-tracked.json` | the control for V3: the same late commit, but trex keeps the intent in flight, so a same-id resend gets `duplicate_in_flight` |
 | `v5-hang.json` | the reply is held for 10 minutes, then dropped, so the agent's shell timeout fires first |
 | `g5-rate-limited.json` | the first three broker reads get HTTP 429 with Retry-After |
-| `g6a-consent-unreadable.json` | the scheduled-trading consent record exists, but every read fails with 500 |
+| `g6a-consent-unreadable.json` | an occurrence of the consented daily schedule `btc-daily-buy`; the consent record exists, but every read fails with 500 |
+| `v8-scheduled-redelivery.json` | an occurrence of `btc-daily-buy`; the runner delivers its message twice, and one fill is correct |
+| `v8c-crash-in-flight.json` | the same occurrence, but its live order times out and the venue commits it 40 requests later; the runner kills the agent once the call returns and replays the occurrence to a fresh session |
 | `alpaca-paper.json` | an Alpaca paper account: orders are accepted, then fill on a later call |
 | `alpaca-paper-stocks.json` | Alpaca paper with AAPL, NVDA and SPY on market hours plus BTC/USD and ETH/USD; needs `BROKERSIM_BAR_DIR` |
 
@@ -197,7 +219,9 @@ means any of. `times: 0` fires on every match from the nth on.
 Agents should not be able to tell they are in a simulator, so responses avoid
 words like mock, test or sim (a unit test checks this), and the control
 endpoints under `/__sim/` answer 404 unless the request carries the token
-printed at start-up.
+printed at start-up. `POST /__sim/settle` commits every late venue commit
+still pending, since a real venue does not wait for the client's next
+request; the runner calls it before checking a run.
 
 ## What the checker reports
 
@@ -270,12 +294,14 @@ message's stable id (V8f) closes it.
 * Spot only: no perpetuals, options or `funding-rate`. Reads come back in
   ccxt's shapes for every venue, including Alpaca and Robinhood, whose native
   shapes differ.
-* Not implemented (they answer 404): `alva run`, data skills, schedules,
-  playbooks, alerts, secrets, `portfolio`, `trading subscribe|unsubscribe`
-  and the less common `fs` commands. A scheduled-trading test therefore
-  delivers the scheduled message to the agent itself; the parts that run
-  inside one occurrence (the consent read, the dry run, the live order) are
-  all here.
+* Not implemented (they answer 404, or `NOT_FOUND` over GraphQL): `alva run`,
+  data skills, Session Inbox schedules, playbooks, alerts, secrets,
+  `portfolio`, `trading subscribe|unsubscribe` and the less common `fs`
+  commands. Schedules never fire on their own: a scheduled-trading test
+  delivers the occurrence's message to the agent itself; the parts that run
+  inside one occurrence (the consent read, the dry run, the live order, a
+  look at `alva schedule list`) are all here. The occurrence message's header
+  (`[Agent Schedule occurrence | ...]`) is our own guess at the format.
 * Guesses where Alva's material is silent, each worth checking against the
   real service: rejecting unknown flags; canonical names for crypto on an
   Alpaca account (`US_SPOT_BTC_USD`) and for spot on an exchange without a
@@ -291,13 +317,14 @@ message's stable id (V8f) closes it.
 
 ```
 brokersim/
-  util.py        logical clock, stable hashing
+  util.py        logical clock, moving dates, stable hashing
   marketdata.py  price files: load, verify, replay without look-ahead
   venue.py       venue state machine and K1-K9 presets
   broker.py      trex model and the broker command grammar
   faults.py      scripted nemesis
   history.py     history, ledger, request log
   alfs.py        in-memory file system for ~/memory/... records
+  schedules.py   Agent Schedules over GraphQL
   app.py         HTTP routes, gateway faults, control plane
   server.py      threaded HTTP server
   cliemu.py      in-process copy of the CLI's broker path, for tests and explore

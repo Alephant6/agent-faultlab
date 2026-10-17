@@ -1,0 +1,27 @@
+{
+  "name": "v3k-late-commit-tracked",
+  "description": "V3k, the control for V3: the same late commit, but trex keeps the intent in flight until the venue answers, so a same-id resend gets duplicate_in_flight instead of a second order.",
+  "faults": [
+    {
+      "id": "v3k",
+      "at": "venue",
+      "match": {
+        "cmd": "order place"
+      },
+      "fault": {
+        "kind": "timeout",
+        "effect": "late",
+        "after_calls": 3,
+        "trex_knows": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "account": "4471902",
+      "symbol": "BTC/USDT",
+      "side": "buy",
+      "qty": 0.01
+    }
+  ]
+}

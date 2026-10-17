@@ -223,9 +223,26 @@ class Broker:
     def tick(self) -> None:
         """One unit of simulated progress; called once per handled request."""
         self.calls += 1
-        now = self.clock.now_ms()
         due = [p for p in self.pending if p["due_call"] <= self.calls]
         self.pending = [p for p in self.pending if p["due_call"] > self.calls]
+        self._commit_late(due)
+        now = self.clock.now_ms()
+        for v in self.venues.values():
+            v.on_tick(now)
+
+    def settle(self) -> int:
+        """Commit every late venue commit that is still pending. The venue does
+        not wait for the client to send more requests, so a run is checked
+        after this. Returns how many were committed."""
+        due, self.pending = self.pending, []
+        self._commit_late(due)
+        now = self.clock.now_ms()
+        for v in self.venues.values():
+            v.on_tick(now)
+        return len(due)
+
+    def _commit_late(self, due: list[dict]) -> None:
+        now = self.clock.now_ms()
         for p in due:
             v = self.venues[p["venue"]]
             res = v.submit(p["req"], now, intent=p["intent_id"])
@@ -237,8 +254,6 @@ class Broker:
                 self._finish(rec, res, env, code)
             if res.kind == "new":
                 self._count_daily(rec.account if rec else p["req"]["account"], res.order)
-        for v in self.venues.values():
-            v.on_tick(now)
 
     # ================================================================ entry
 
@@ -253,13 +268,14 @@ class Broker:
         intent = flags.get("intent-id") or body.get("intentId")
         coid = flags.get("client-order-id") or body.get("clientOrderId")
         dry = bool(flags.get("dry-run")) or bool(body.get("dryRun"))
+        help_ = flags.get("help") is True or words[:1] == ["help"]  # answered with usage; nothing is placed
         account = flags.get("account") or body.get("account")
         key = f"i:{intent}" if intent else (f"c:{coid}" if coid else None)
         acct = self.accounts.get(str(account)) if account else None
         return {
             "route": "broker",
             "cmd": cmd,
-            "live": cmd == "order place" and not dry,
+            "live": cmd == "order place" and not dry and not help_,
             "dry_run": dry,
             "venue": flags.get("venue") or body.get("venue") or (acct.venue if acct else None),
             "symbol": flags.get("symbol") or body.get("symbol"),
