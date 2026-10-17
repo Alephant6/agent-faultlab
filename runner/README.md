@@ -142,12 +142,16 @@ trex finds nothing at the venue and resends, and the late first attempt
 fills too. Whether Alva's trex resends there is not documented; it is
 `on_retry_after_unknown` in brokersim's `TrexSemantics`.
 
-With Claude Code (batch of 2026-10-17), every `+gate` run was safe and
-filled the wanted order once: 20 scored runs of `baseline`, `v3`, `v8c` and
-`v8nf`. In `v3+gate` the resend that fills twice without the gate was
+With Claude Code (two batches of 2026-10-17), every `+gate` run was safe
+and filled the wanted order once: 25 scored runs of `baseline`, `v3`, `v8c`
+and `v8nf`. In `v3+gate` the resend that fills twice without the gate was
 refused as `gate_already_placed`; in `v8c+gate` the replay's new order was
 refused as `gate_outcome_unknown`. In `v3+gate` the gate found the first
 order partly because brokersim counts requests, the gate's own lookups
 included, towards a late commit (`after_calls`); a venue that commits later
 than the lookups' 7 seconds leaves the gate refusing as unknown instead,
-which is still safe but ends the run with the order in doubt.
+which is still safe but ends the run with the order in doubt. In the first
+batch several `v8c+gate` agents then told the user nothing was bought, while
+the first order filled later; with the refusal text that says it may already
+have filled, all 12 attempts of the second batch, blocked ones included,
+told the user the earlier order might still go through.

@@ -44,8 +44,8 @@ Alva's service and contains none of its output.
   follows the skill's docs to the letter double-orders on the late-commit,
   redelivery and crash-replay tasks and is safe on all of them behind the
   gate.
-* With Claude Code (batch of 2026-10-17): behind the gate, no double fill in
-  20 scored runs of the late-commit, crash-replay, baseline and redelivery
+* With Claude Code (two batches of 2026-10-17): behind the gate, no double fill in
+  25 scored runs of the late-commit, crash-replay, baseline and redelivery
   tasks, and every run that was meant to fill did. Without the gate the same
   agent double-filled in some late-commit and crash-replay runs; in the
   crash-replay ones the second fill landed after the run ended, so the
