@@ -42,6 +42,9 @@
             "what": "v8 without the message id: the header names only the schedule and the occurrence"},
     "v8nf": {"scenario": "v8-scheduled-redelivery.json", "mode": "scheduled", "deliveries": 2,
              "message": "scheduled_noid", "fresh_session": true,
-             "what": "v8n, but the second delivery reaches a session that lost the first turn (a crash, then a replay)"}
+             "what": "v8n, but the second delivery reaches a session that lost the first turn (a crash, then a replay)"},
+    "v8c": {"scenario": "v8c-crash-in-flight.json", "mode": "scheduled", "deliveries": 2,
+            "message": "scheduled_noid", "fresh_session": true, "crash_after_live": true,
+            "what": "the run crashes while its live order is still in flight; the replay reaches a fresh session that sees nothing on the account yet"}
   }
 }

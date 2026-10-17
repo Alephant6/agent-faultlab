@@ -37,6 +37,7 @@ import uuid
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 BROKERSIM = os.path.join(REPO, "brokersim")
+GATE = os.path.join(REPO, "gate", "alva_gate.py")
 sys.path.insert(0, BROKERSIM)
 
 from brokersim import checker  # noqa: E402
@@ -154,6 +155,23 @@ def live_places(run_dir: str) -> int:
                if e["type"] == "invoke" and e["f"] == "broker order place" and e["value"].get("live"))
 
 
+def live_place_returned(run_dir: str) -> bool:
+    """Whether a live `order place` has reached the server and been answered."""
+    path = os.path.join(run_dir, "history.jsonl")
+    try:
+        open_live = False
+        for e in load_jsonl(path):
+            if e["process"] != "client" or e["f"] != "broker order place":
+                continue
+            if e["type"] == "invoke":
+                open_live = bool(e["value"].get("live"))
+            elif open_live and "exit" in (e.get("value") or {}):
+                return True
+    except (OSError, ValueError):  # not written yet, or a line still being written
+        pass
+    return False
+
+
 # ------------------------------------------------------------------ agent home
 
 WRAPPER = """#!/usr/bin/env bash
@@ -163,11 +181,16 @@ for a in "$@"; do
 done
 case "${{1:-}}" in configure|auth) echo "alva $1: the profile is managed by this environment" >&2; exit 1;; esac
 export ALVA_ENDPOINT='{url}' ARRAYS_ENDPOINT='{url}' ALVA_API_KEY='{key}' XDG_CONFIG_HOME='{xdg}'
-exec '{real}' "$@"
+{run} "$@"
 """
+# alva-gate in front of the real CLI. Its journal is outside the workspace:
+# it belongs to the runtime, not to the agent's session.
+GATED = """export ALVA_GATE_OCCURRENCE='{occurrence}'
+exec '{python}' '{gate}' --real '{real}' --state '{state}' --"""
 
 
-def make_home(ep_dir: str, skill_dir: str, server: Server, alva_bin: str) -> str:
+def make_home(ep_dir: str, skill_dir: str, server: Server, alva_bin: str, gate: bool = False,
+              occurrence: str = "") -> str:
     home = os.path.join(ep_dir, "workspace")
     shutil.copytree(skill_dir, os.path.join(home, ".claude", "skills", "alva"))
     bindir = os.path.join(ep_dir, "bin")
@@ -176,7 +199,9 @@ def make_home(ep_dir: str, skill_dir: str, server: Server, alva_bin: str) -> str
     os.makedirs(xdg)
     wrapper = os.path.join(bindir, "alva")
     with open(wrapper, "w", encoding="utf-8") as f:
-        f.write(WRAPPER.format(url=server.url, key=API_KEY, xdg=xdg, real=alva_bin))
+        run = GATED.format(occurrence=occurrence, python=sys.executable, gate=GATE, real=alva_bin,
+                           state=os.path.join(ep_dir, "gate")) if gate else f"exec '{alva_bin}'"
+        f.write(WRAPPER.format(url=server.url, key=API_KEY, xdg=xdg, run=run))
     os.chmod(wrapper, 0o755)
     return home
 
@@ -196,6 +221,10 @@ def agent_env(ep_dir: str) -> dict:
 # ------------------------------------------------------------------ drivers
 
 
+class Crashed(Exception):
+    """The harness killed the agent mid-turn."""
+
+
 class ScriptedDriver:
     """No model: follows broker.md and SKILL.md to the letter. For testing the
     harness; its results say what a literal reading of the docs does."""
@@ -207,6 +236,7 @@ class ScriptedDriver:
 
     def start(self, home: str, env: dict, system_prompt: str, log_dir: str) -> None:
         self.env, self.log = env, open(os.path.join(log_dir, "transcript.jsonl"), "a", encoding="utf-8")
+        self.crash_when = None
 
     def alva(self, *argv: str) -> tuple[int, dict | None, str]:
         try:
@@ -221,9 +251,18 @@ class ScriptedDriver:
             body = None
         self.log.write(json.dumps({"argv": argv, "exit": code, "stdout": out[:2000], "stderr": err[:500]}) + "\n")
         self.log.flush()
+        if self.crash_when and self.crash_when():
+            raise Crashed
         return code, body, err
 
-    def turn(self, text: str) -> dict:
+    def turn(self, text: str, crash_when=None) -> dict:
+        self.crash_when = crash_when
+        try:
+            return self._turn(text)
+        except Crashed:
+            return {"final": "", "crashed": True}
+
+    def _turn(self, text: str) -> dict:
         place = ["broker", "order", "place", "--account", "4471902", "--venue", "binance", "--symbol", "BTC/USDT",
                  "--side", "buy", "--amount", "0.01"]
         if "auto-trade-consent" in text:
@@ -267,7 +306,8 @@ class ClaudeDriver:
         self.session = str(uuid.uuid4())
         self.turns = 0
 
-    def turn(self, text: str) -> dict:
+    def turn(self, text: str, crash_when=None) -> dict:
+        """crash_when: kill the agent, as a crashed host would, once this returns True."""
         cmd = [self.bin, "-p", text, "--output-format", "stream-json", "--verbose",
                "--setting-sources", "project", "--strict-mcp-config", "--no-chrome",
                "--permission-mode", "dontAsk",
@@ -283,11 +323,17 @@ class ClaudeDriver:
         out_path = os.path.join(self.log_dir, "transcript.jsonl")
         with open(out_path, "a", encoding="utf-8") as out, \
                 open(os.path.join(self.log_dir, "agent-stderr.log"), "a", encoding="utf-8") as err:
-            try:
-                p = subprocess.run(cmd, cwd=self.home, env=self.env, stdout=out, stderr=err, timeout=TURN_TIMEOUT_S)
-                code = p.returncode
-            except subprocess.TimeoutExpired:
-                code = "timeout"
+            p = subprocess.Popen(cmd, cwd=self.home, env=self.env, stdout=out, stderr=err, start_new_session=True)
+            deadline, code = time.time() + TURN_TIMEOUT_S, None
+            while code is None:
+                try:
+                    code = p.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    stop = "crashed" if crash_when and crash_when() else "timeout" if time.time() > deadline else None
+                    if stop:
+                        os.killpg(p.pid, signal.SIGKILL)  # the agent and the CLI call it is running
+                        p.wait()
+                        code = stop
         result, init, tool_uses = {}, {}, 0
         for line in open(out_path, encoding="utf-8"):
             try:
@@ -300,10 +346,14 @@ class ClaudeDriver:
                 init = m
             elif m.get("type") == "assistant":
                 tool_uses += sum(1 for b in m.get("message", {}).get("content", []) if b.get("type") == "tool_use")
+        crashed = code == "crashed"
+        if crashed:
+            result = {}  # the last result in the transcript belongs to an earlier turn
         denied = result.get("permission_denials") or []
-        return {"exit": code, "final": result.get("result", ""), "model": init.get("model"),
+        return {"exit": code, "final": result.get("result", ""), "model": init.get("model"), "crashed": crashed,
                 # no result, or the CLI itself failed (login, usage limit): not the agent's choice
-                "agent_error": code not in (0, "timeout") or not result or bool(result.get("is_error")),
+                "agent_error": not crashed and (code not in (0, "timeout") or not result
+                                                or bool(result.get("is_error"))),
                 "tools": init.get("tools"), "skills": init.get("slash_commands"),
                 "cost_usd": result.get("total_cost_usd"), "num_turns": result.get("num_turns"),
                 "tool_uses_total": tool_uses, "permission_denials": len(denied),
@@ -324,22 +374,26 @@ def ulid(ms: int, seed: str) -> str:
     return "".join(CROCKFORD[(n >> (5 * i)) & 31] for i in reversed(range(26)))
 
 
-def occurrence_message(template: str, sc: dict) -> str:
-    """The scheduler's message for the occurrence firing at the scenario's
-    start, from its first schedule (after any move_to)."""
+def occurrence(sc: dict) -> tuple[dict, str]:
+    """The scenario's first schedule and the occurrence firing at its start
+    (after any move_to)."""
     moved, _ = move_scenario(sc)
     if not moved.get("schedules"):
         raise ValueError(f"scenario {sc.get('name')!r} has no schedule to deliver")
-    s = moved["schedules"][0]
-    start = moved["clock"]["start"]
-    at = start[:19] + "Z"
+    return moved["schedules"][0], moved["clock"]["start"][:19] + "Z"
+
+
+def occurrence_message(template: str, sc: dict) -> str:
+    """The scheduler's message for that occurrence."""
+    s, at = occurrence(sc)
     return template.format(schedule=s["name"], occurrence=at, text=s["text"],
-                           message_id="msg_" + ulid(parse_iso_ms(start), f"{s['name']}:{at}"))
+                           message_id="msg_" + ulid(parse_iso_ms(at), f"{s['name']}:{at}"))
 
 
 def run_episode(task_name: str, driver, out: str, tasks: dict, skill_dir: str, alva_bin: str,
                 bar_dir: str | None = None, clock: str = "today") -> dict:
-    task = tasks["tasks"][task_name]
+    base, _, variant = task_name.partition("+")
+    task, gate = tasks["tasks"][base], variant == "gate"
     msgs = tasks["messages"]
     os.makedirs(out)
     sc = load_scenario(os.path.join(BROKERSIM, "scenarios", task["scenario"]))
@@ -356,7 +410,11 @@ def run_episode(task_name: str, driver, out: str, tasks: dict, skill_dir: str, a
     server = Server(sc_path, run_dir)
     turns, started = [], time.time()
     try:
-        home = make_home(out, skill_dir, server, alva_bin)
+        occ = ""
+        if task["mode"] == "scheduled":  # the runtime knows which occurrence it is delivering
+            sched, at = occurrence(sc)
+            occ = f"{sched['name']}@{at}"
+        home = make_home(out, skill_dir, server, alva_bin, gate, occ)
         start = lambda: driver.start(home, agent_env(out), tasks["system_prompt"], out)  # noqa: E731
         start()
         if task["mode"] == "interactive":
@@ -370,7 +428,9 @@ def run_episode(task_name: str, driver, out: str, tasks: dict, skill_dir: str, a
             for i in range(task.get("deliveries", 1)):
                 if i and task.get("fresh_session"):
                     start()  # a session that lost the crashed turn: no memory of the first delivery
-                r = driver.turn(message)
+                # crash_after_live: the host dies once the first delivery's live order is answered
+                crash = (lambda: live_place_returned(run_dir)) if i == 0 and task.get("crash_after_live") else None
+                r = driver.turn(message, crash_when=crash)
                 turns.append(dict(r, sent=f"scheduled#{i + 1}", live_places_after=live_places(run_dir)))
     finally:
         settled = server.stop()
@@ -378,12 +438,18 @@ def run_episode(task_name: str, driver, out: str, tasks: dict, skill_dir: str, a
     score = score_episode(task, turns, res)
     result = {"task": task_name, "agent": driver.name, "seconds": round(time.time() - started, 1),
               "turns": turns, "check": res, **score, "late_commits_after_run": settled,
+              "gate": gate, "gate_refusals": [e["code"] for e in gate_log(out) if e.get("event") == "refused"],
               "agent_ok": not any(t.get("agent_error") for t in turns),
               # a refused command changed what the agent could do: the run says little about the fault
               "blocked": any(t.get("permission_denials") for t in turns)}
     with open(os.path.join(out, "result.json"), "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     return result
+
+
+def gate_log(ep: str) -> list[dict]:
+    path = os.path.join(ep, "gate", "gate.jsonl")
+    return load_jsonl(path) if os.path.exists(path) else []
 
 
 def score_episode(task: dict, turns: list[dict], res: dict) -> dict:
@@ -515,9 +581,15 @@ def digest(batch_dir: str) -> str:
             if r.get("late_commits_after_run"):
                 head += f" late-commits-after-run={r['late_commits_after_run']}"
             body = [head] + steps(os.path.join(ep, "server"))
+            for e in gate_log(ep):
+                if e.get("event") == "refused":
+                    body.append(f"  gate refused: {' '.join(e['argv'])[:120]} ({e['code']})")
             for t in r["turns"]:
                 for d in t.get("denied") or []:
                     body.append(f"  refused: {d[:200]}")
+                if t.get("crashed"):
+                    body.append(f"> [{t.get('sent')}] (killed by the harness once its live order was answered)")
+                    continue
                 body.append(f"> [{t.get('sent')}] " + (t.get("final") or "").strip().replace("\n", " ")[:400])
             parts.append("\n".join(body))
     out = "\n\n".join(parts) + "\n"
@@ -575,7 +647,8 @@ def main(argv=None) -> int:
             s.add_argument("--task", required=True)
         else:
             s.add_argument("--tasks", default="all",
-                           help="comma-separated task names, or all; name:N runs that task N times instead of --k")
+                           help="comma-separated task names, or all; name:N runs that task N times instead of --k; "
+                                "name+gate runs it with alva-gate in front of the CLI")
             s.add_argument("--k", type=int, default=5)
             s.add_argument("--jobs", type=int, default=1, help="episodes run at the same time")
             s.add_argument("--redo-blocked", type=int, default=2,
@@ -611,7 +684,8 @@ def main(argv=None) -> int:
     runs = {}
     for item in (list(tasks["tasks"]) if a.tasks == "all" else a.tasks.split(",")):
         name, _, n = item.strip().partition(":")
-        if name not in tasks["tasks"]:
+        base, plus, variant = name.partition("+")
+        if base not in tasks["tasks"] or (plus and variant != "gate"):
             p.error(f"unknown task {name!r}")
         runs[name] = int(n) if n else a.k
     names = list(runs)

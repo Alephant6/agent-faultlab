@@ -13,7 +13,10 @@ what happened, and reports whether any user order filled twice.
 
 The point is to test rules that exist only as prose, such as "after an
 unknown outcome, retry the same intent-id or poll, never re-place", against
-failures that cannot be produced on demand on a live service.
+failures that cannot be produced on demand on a live service, and then to
+enforce them in code: [alva-gate](gate/README.md) sits between the agent and
+the CLI and refuses a live order that could fill twice, and the runner
+measures the same agent with and without it.
 
 This project is not affiliated with or endorsed by Alva. It never contacts
 Alva's service and contains none of its output.
@@ -23,10 +26,11 @@ Alva's service and contains none of its output.
 | directory | what |
 |---|---|
 | [brokersim/](brokersim/README.md) | the simulator: broker command grammar and trading REST routes as the CLI expects them, venue idempotency semantics as parameters, scripted faults, Jepsen-style history, checker, deterministic replay, an exploration matrix, and a smoke script that drives the real CLI |
-| [runner/](runner/README.md) | runs an agent that has Alva's skill (Claude Code headless, or a scripted stand-in) against brokersim and scores each run from the history: no double fill, confirmation before a live order, no live order without readable consent; pass^k per task |
+| [runner/](runner/README.md) | runs an agent that has Alva's skill (Claude Code headless, or a scripted stand-in) against brokersim and scores each run from the history: no double fill, confirmation before a live order, no live order without readable consent; pass^k per task; any task also runs with the gate (`<task>+gate`) |
+| [gate/](gate/README.md) | alva-gate: a journal of live orders kept outside the agent's session, no new order while an earlier one's outcome is unknown, one order per scheduled occurrence |
 | [market-data/](market-data/README.md) | download script for the replayed prices (Binance Vision crypto, Alpaca US stocks) and a reference SHA-256 manifest; the data itself is not committed |
 
-## Status (2026-10-12)
+## Status (2026-10-17)
 
 * brokersim v0.1 runs with the unmodified `alva` CLI 0.31.0. Eight scenarios
   pass through the real CLI, 81 unit tests and the checker self-test pass, and
@@ -34,8 +38,12 @@ Alva's service and contains none of its output.
   docs was also run through the real CLI against the simulator; the
   differences found are fixed or listed in brokersim's README under "What
   this does not do".
-* Next: run an LLM agent with the unmodified skill against these scenarios,
-  then add a guardrail layer and compare the two.
+* The runner has run Claude Code with the unmodified skill against these
+  scenarios in five batches since 2026-10-12.
+* alva-gate is in place, with 10 tests of its own. A scripted agent that
+  follows the skill's docs to the letter double-orders on the late-commit,
+  redelivery and crash-replay tasks and is safe on all of them behind the
+  gate. Next: the same comparison with Claude Code.
 
 ## Quick start
 

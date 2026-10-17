@@ -201,6 +201,7 @@ orders per day). Starters in `scenarios/`:
 | `g5-rate-limited.json` | the first three broker reads get HTTP 429 with Retry-After |
 | `g6a-consent-unreadable.json` | an occurrence of the consented daily schedule `btc-daily-buy`; the consent record exists, but every read fails with 500 |
 | `v8-scheduled-redelivery.json` | an occurrence of `btc-daily-buy`; the runner delivers its message twice, and one fill is correct |
+| `v8c-crash-in-flight.json` | the same occurrence, but its live order times out and the venue commits it 40 requests later; the runner kills the agent once the call returns and replays the occurrence to a fresh session |
 | `alpaca-paper.json` | an Alpaca paper account: orders are accepted, then fill on a later call |
 | `alpaca-paper-stocks.json` | Alpaca paper with AAPL, NVDA and SPY on market hours plus BTC/USD and ETH/USD; needs `BROKERSIM_BAR_DIR` |
 
