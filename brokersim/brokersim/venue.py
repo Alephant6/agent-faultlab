@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass, field, fields
 from .util import DAY_MS, iso, trading_day
 
 TERMINAL = {"closed", "canceled", "expired", "rejected"}
+TIME_IN_FORCE = {"GTC", "IOC", "FOK"}
 
 
 def us_equity_session(now: int) -> tuple[int | None, int | None]:
@@ -205,6 +206,9 @@ class Order:
     fill_due_call: int | None = None  # async ack: fills when the venue reaches this call
     async_outcome: str = "fill"  # or 'reject' (scheduled by a fault)
     creation_snapshot: dict = field(default_factory=dict)
+    tif: str = "GTC"  # GTC | IOC | FOK (fills are all-or-nothing, so IOC and FOK behave alike)
+    post_only: bool = False
+    params: dict = field(default_factory=dict)  # venue-native --param values, as sent
 
     @property
     def average(self) -> float | None:
@@ -235,6 +239,7 @@ class Venue:
         self.by_coid: dict[str, list[str]] = {}
         self.balances: dict[str, dict[str, dict[str, float]]] = {}  # account -> asset -> {free, used}
         self.cost_basis: dict[str, dict[str, list[float]]] = {}  # account -> base -> [qty, avg]
+        self.initial: dict[str, dict[str, float]] = {}  # account -> starting balances
         self._seq = 0
         self.calls = 0  # venue-local call counter for async fills
 
@@ -242,6 +247,7 @@ class Venue:
 
     def open_account(self, account: str, balances: dict[str, float]) -> None:
         self.balances[account] = {a: {"free": float(v), "used": 0.0} for a, v in balances.items()}
+        self.initial[account] = {a: float(v) for a, v in balances.items()}
         self.cost_basis[account] = {}
 
     def _bal(self, account: str, asset: str) -> dict[str, float]:
@@ -348,10 +354,19 @@ class Venue:
                 return SubmitResult("duplicate", prior)
         if req["amount"] <= 0 or req["amount"] < m.min_amount:
             return self._reject(req, now, "invalid_amount", f"amount below minimum {m.min_amount}")
+        params = dict(req.get("params") or {})
+        tif = str(params.get("timeInForce", "GTC")).upper()
+        if tif not in TIME_IN_FORCE:
+            return self._reject(req, now, "invalid_param", f"timeInForce {tif} is not supported")
+        post_only = str(params.get("postOnly", "false")).lower() in ("true", "1")
+        if post_only and req["type"] != "limit":
+            return self._reject(req, now, "invalid_param", "postOnly needs a limit order")
         ba = self.bid_ask(req["symbol"], now)
         if ba is None:
             return self._reject(req, now, "market_closed", "no price available")
         bid, ask = ba
+        if post_only and ((req["side"] == "buy" and req["price"] >= ask) or (req["side"] == "sell" and req["price"] <= bid)):
+            return self._reject(req, now, "post_only_would_take", "a post-only order would match immediately")
         if self.sem.closed_market == "reject" and not self.is_open(req["symbol"], now):
             return self._reject(req, now, "market_closed", f"{req['symbol']} is outside its trading session")
         ref_price = req.get("price") if req["type"] == "limit" else (ask if req["side"] == "buy" else bid)
@@ -377,6 +392,9 @@ class Venue:
             limit_price=req.get("price"),
             created_ms=now,
             updated_ms=now,
+            tif=tif,
+            post_only=post_only,
+            params=params,
         )
         self.orders[o.id] = o
         if coid is not None:
@@ -414,8 +432,18 @@ class Venue:
         b["used"] -= o.reserved
         o.reserved = 0.0
 
+    def _expire(self, o: Order, now: int) -> None:
+        self._release(o)
+        o.status = "expired"
+        o.updated_ms = now
+        self.rec.venue("expire", {"venue": self.name, "order": o.id, "coid": o.coid, "tif": o.tif})
+
     def _try_fill(self, o: Order, now: int) -> None:
-        if o.status != "open" or not self.is_open(o.symbol, now):
+        if o.status != "open":
+            return
+        if not self.is_open(o.symbol, now):
+            if o.tif != "GTC":
+                self._expire(o, now)  # IOC/FOK cannot wait for the open
             return
         # An order queued while the market was closed executes at the open.
         open_ms = self.session_bounds(o.symbol, now)[0]
@@ -427,6 +455,8 @@ class Venue:
         px = round(ask if o.side == "buy" else bid, self.markets[o.symbol].price_precision)
         if o.type == "limit" and o.limit_price is not None:
             if (o.side == "buy" and px > o.limit_price) or (o.side == "sell" and px < o.limit_price):
+                if o.tif != "GTC":
+                    self._expire(o, now)
                 return  # not marketable: rest
         self._fill(o, o.amount - o.filled, px, open_ms if queued else now)
 
@@ -516,7 +546,8 @@ class Venue:
             "status": o.status,
             "symbol": o.symbol,
             "type": o.type,
-            "timeInForce": "GTC",
+            "timeInForce": o.tif,
+            "postOnly": o.post_only,
             "side": o.side,
             "price": o.limit_price if o.limit_price is not None else avg,
             "average": avg,
@@ -526,7 +557,8 @@ class Venue:
             "cost": o.cost,
             "fee": {"cost": o.fee, "currency": self.markets[o.symbol].quote},
             "trades": [],
-            "info": {"orderId": o.id, "clientOrderId": o.coid, "status": o.status.upper()},
+            "info": {"orderId": o.id, "clientOrderId": o.coid, "status": o.status.upper(),
+                     **({"params": o.params} if o.params else {})},
         }
 
     def balance_view(self, account: str, now: int) -> dict:

@@ -90,9 +90,13 @@ def check(events: list[dict], fills: list[dict], expect: list[dict] | None = Non
         if ev["process"] == "venue" and ev["f"] == "ambiguous_readback":
             anomalies.append({"kind": "ambiguous_readback", "index": ev["index"], **ev["value"]})
 
+    # A simulator exception means the run measured the simulator, not the agent.
+    harness_errors = [ev["value"].get("error") for ev in events if ev["process"] == "sim" and ev["type"] == "error"]
     return {
         "valid": not violations,
         "complete": complete,
+        "harness_ok": not harness_errors,
+        "harness_errors": harness_errors,
         "violations": violations,
         "anomalies": anomalies,
         "fills": len(fills),

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import traceback
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs
 
@@ -61,6 +62,9 @@ def api_error(status: int, code: str, message: str, **kw) -> Response:
     return Response.of_json(status, {"error": {"code": code, "message": message}}, **kw)
 
 
+TRADING_ROUTES = {"accounts", "risk-rules", "portfolio", "orders", "subscriptions", "equity-history", "execute"}
+FS_ROUTES = {"read", "write", "stat", "readdir", "mkdir", "remove"}
+
 HTTP_CODES = {400: "INVALID_ARGUMENT", 401: "UNAUTHENTICATED", 403: "PERMISSION_DENIED", 404: "NOT_FOUND",
               429: "RATE_LIMITED", 500: "INTERNAL", 502: "UNAVAILABLE", 503: "UNAVAILABLE", 504: "DEADLINE_EXCEEDED"}
 
@@ -74,6 +78,14 @@ class App:
     # ------------------------------------------------------------ entry
 
     def handle(self, req: Request) -> Response:
+        try:
+            return self._handle(req)
+        except Exception as e:  # a simulator bug must not look like a lost reply
+            self.sim.rec.event("sim", "error", "internal", {"path": req.path, "error": repr(e)[:500],
+                                                             "trace": traceback.format_exc(limit=6)[-2000:]})
+            return api_error(500, "INTERNAL", "internal error")
+
+    def _handle(self, req: Request) -> Response:
         if req.path.startswith(CONTROL_PREFIX):
             return self._control(req)
         sim = self.sim
@@ -86,6 +98,11 @@ class App:
         f = op["f"]
         sim.rec.invoke(f, {k: v for k, v in op.items() if k not in ("f",)})
 
+        if op["route"] == "other":
+            # Before the key check: some of these (data skills) are called
+            # without a key, and a 401 would send an agent to `alva auth login`.
+            self.unknown_routes[op["f"]] = self.unknown_routes.get(op["f"], 0) + 1
+            return self._finish_error(op, 404, "NOT_FOUND", f"{req.path} not found")
         if req.headers.get("x-alva-api-key") != sim.api_key:
             return self._finish_error(op, 401, "UNAUTHENTICATED", "Missing or invalid API key")
 
@@ -155,19 +172,21 @@ class App:
             op["argv"] = argv
             return op
         m = re.match(r"^/api/v1/trading/([a-z-]+)$", p)
-        if m:
+        if m and m.group(1) in TRADING_ROUTES:
             cmd = m.group(1)
             body = req.json()
             account = req.query.get("accountId") or body.get("accountId")
             live = cmd == "execute" and not body.get("dryRun", False)
             return {"route": "trading", "cmd": cmd, "f": f"trading {cmd}", "account": account, "live": live}
         m = re.match(r"^/api/v1/fs/([a-z]+)$", p)
-        if m:
+        if m and m.group(1) in FS_ROUTES:
             path = req.query.get("path") or req.json().get("path") or ""
             return {"route": "fs", "cmd": m.group(1), "f": f"fs {m.group(1)}", "path": self.sim.alfs.norm(path) if path else ""}
         if p == "/api/v1/me":
             return {"route": "me", "cmd": "me", "f": "me"}
-        if p.startswith("/api/v1/arrays-jwt/"):
+        if p == "/api/v1/trading-pairs/search":
+            return {"route": "trading-pairs", "cmd": "search", "f": "trading-pairs search"}
+        if p in ("/api/v1/arrays-jwt/status", "/api/v1/arrays-jwt/ensure"):
             return {"route": "arrays-jwt", "cmd": p.rsplit("/", 1)[-1], "f": "arrays-jwt"}
         return {"route": "other", "cmd": p, "f": f"{req.method} {p}"}
 
@@ -184,31 +203,40 @@ class App:
             if isinstance(env, dict):
                 summary.update({k: env.get(k) for k in ("status", "reason", "orderId", "intentId", "filled") if k in env})
             return Response.of_json(200, {"envelope": env, "exit": code}), code, summary
-        if route == "trading":
-            return self._trading(req, op)
-        if route == "fs":
-            return self._fs(req, op, corrupt=(kind == "corrupt"))
+        try:
+            if route == "trading":
+                return self._trading(req, op)
+            if route == "fs":
+                return self._fs(req, op, corrupt=(kind == "corrupt"))
+        except (ValueError, TypeError, KeyError, AttributeError) as e:
+            return api_error(400, "INVALID_ARGUMENT", f"bad request: {e}"), 1, {"http": 400}
         if route == "me":
             u = self.sim.scenario["user"]
             return Response.of_json(200, {
                 "id": u["id"], "username": u["username"], "subscription_tier": u.get("tier", "pro"),
                 "telegram_username": "", "discord_username": "", "slack_username": "",
-                "whatsapp_username": "", "imessage_username": "", "active_channel": "web",
+                "whatsapp_username": "", "imessage_username": "", "active_channel": "",
                 "toolkit_min_version": "0.31.0", "home_path": self.sim.alfs.home,
             }), 0, {}
-        if route == "arrays-jwt":
-            exp = self.sim.clock.now_ms() + 30 * 86_400_000
-            return Response.of_json(200, {"status": "active", "expires_at": iso(exp)}), 0, {}
-        self.unknown_routes[op["f"]] = self.unknown_routes.get(op["f"], 0) + 1
-        resp = api_error(404, "NOT_FOUND", f"{req.path} not found")
-        return resp, 1, {"http": 404}
+        if route == "trading-pairs":
+            pairs = self.sim.broker.trading_pairs(str(req.query.get("q", "")))
+            return Response.of_json(200, {"trading_pairs": pairs}), 0, {"pairs": len(pairs)}
+        if route == "arrays-jwt":  # toolkit types: ArraysJwtStatusResponse / EnsureArraysJwtResponse
+            exp_s = (self.sim.clock.now_ms() + 30 * 86_400_000) // 1000
+            tier = {"free": "SUBSCRIPTION_TIER_FREE"}.get(self.sim.scenario["user"].get("tier", "pro"),
+                                                          "SUBSCRIPTION_TIER_PRO")
+            if op["cmd"] == "ensure":
+                return Response.of_json(200, {"expires_at": exp_s, "tier": tier, "renewed": False}), 0, {}
+            return Response.of_json(200, {"exists": True, "expires_at": exp_s, "tier": tier,
+                                          "renewal_needed": False}), 0, {}
+        return api_error(404, "NOT_FOUND", f"{req.path} not found"), 1, {"http": 404}
 
     def _trading(self, req: Request, op: dict) -> tuple[Response, int, dict]:
         b = self.sim.broker
         cmd = op["cmd"]
         acct = op.get("account")
         if cmd == "accounts" and req.method == "GET":
-            return Response.of_json(200, [b.account_view(a) for a in b.accounts.values()]), 0, {}
+            return Response.of_json(200, [b.account_view(a, rest=True) for a in b.accounts.values()]), 0, {}
         if cmd == "risk-rules":
             if req.method == "PUT":
                 body = req.json()
@@ -221,14 +249,18 @@ class App:
         if cmd == "portfolio":
             return Response.of_json(200, b.portfolio(acct)), 0, {}
         if cmd == "orders":
-            limit = int(req.query["limit"]) if req.query.get("limit") else None
-            return Response.of_json(200, b.trading_orders(acct, limit)), 0, {}
+            q = req.query
+            limit = int(q["limit"]) if q.get("limit") else None
+            since = int(q["since"]) if q.get("since") else None
+            return Response.of_json(200, b.trading_orders(acct, limit, q.get("source") or None, since)), 0, {}
         if cmd == "subscriptions":
             return Response.of_json(200, []), 0, {}
         if cmd == "equity-history":
-            p = b.portfolio(acct)
-            return Response.of_json(200, [{"timestamp": self.sim.clock.now_ms(), "equity": p["equity"],
-                                           "pnl": p["unrealizedPnl"], "pnlPct": 0.0}]), 0, {}
+            q = req.query
+            points = b.equity_history(acct, q.get("timeframe") or "1d",
+                                      int(q["sinceMs"]) if q.get("sinceMs") else None,
+                                      int(q["untilMs"]) if q.get("untilMs") else None)
+            return Response.of_json(200, points), 0, {"points": len(points)}
         if cmd == "execute" and req.method == "POST":
             body = req.json()
             result, status = b.execute_signal(acct, str(body.get("signalJson", "")), bool(body.get("dryRun", False)))

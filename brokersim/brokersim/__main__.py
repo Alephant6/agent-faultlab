@@ -15,6 +15,7 @@ import json
 import os
 import secrets
 import sys
+import time
 import unittest
 
 from . import checker, explore, marketdata, replay, server
@@ -38,10 +39,32 @@ def cmd_fetch(a) -> int:
     return 0
 
 
+RUN_FILES = ("scenario.json", "history.jsonl", "ledger.jsonl", "requests.jsonl", "state.json")
+
+
+def _archive_previous_run(out: str) -> None:
+    """Move an earlier run's files into OUT/archive/<time>/ so a restart (for
+    example by systemd) never overwrites a recorded history."""
+    present = [n for n in RUN_FILES if os.path.exists(os.path.join(out, n))]
+    if not present:
+        return
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(os.path.getmtime(os.path.join(out, present[0]))))
+    dest = os.path.join(out, "archive", stamp)
+    n = 1
+    while os.path.exists(dest):
+        n += 1
+        dest = os.path.join(out, "archive", f"{stamp}-{n}")
+    os.makedirs(dest)
+    for name in present:
+        os.replace(os.path.join(out, name), os.path.join(dest, name))
+    sys.stderr.write(f"previous run moved to {dest}\n")
+
+
 def cmd_serve(a) -> int:
     sc = load_scenario(a.scenario) if a.scenario else load_scenario({})
     if a.out:
         os.makedirs(a.out, exist_ok=True)
+        _archive_previous_run(a.out)
         with open(os.path.join(a.out, "scenario.json"), "w", encoding="utf-8") as f:
             json.dump(sc, f, indent=2)
     md = None

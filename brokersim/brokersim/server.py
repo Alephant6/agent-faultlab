@@ -63,6 +63,7 @@ def make_handler(app: App, lock: threading.Lock, verbose: bool = False):
 class QuietServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    request_queue_size = 128  # the default 5 resets connections under a burst of parallel calls
 
     def handle_error(self, request, client_address):
         # Dropped connections raise inside the handler on purpose.

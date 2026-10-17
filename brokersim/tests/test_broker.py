@@ -113,6 +113,9 @@ class ControlPlaneTest(unittest.TestCase):
             ["describe"], ["quote", "--venue", "binance", "--symbol", "BTC/USDT"], place(),
             ["balance", "--account", ACCT])]
         blobs.append(json.dumps(cli.rest("GET", "/api/v1/me")[1]).lower())
+        for path in ("/api/v1/skills", "/api/v1/arrays-jwt/status", "/api/v1/trading-pairs/search"):
+            blobs.append(json.dumps(cli.rest("GET", path, {"q": "BTC"})[1]).lower())
+        blobs.append(json.dumps(cli.broker(place(extra=["--bogus"]))[0]).lower())
         for word in ("sim", "mock", "fake", "synthetic"):
             for b in blobs:
                 self.assertNotIn(word, b)
